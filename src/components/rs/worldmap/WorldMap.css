@@ -1,0 +1,88 @@
+.worldmap-container,
+.worldmap {
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    width: 100%;
+    height: 100%;
+}
+
+.worldmap {
+    overflow: hidden;
+}
+
+.worldmap-image {
+    position: absolute;
+}
+
+.worldmap-drag {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    /* background-color: white; */
+}
+
+.worldmap-drag.dragging {
+    cursor: grabbing;
+}
+
+.worldmap-border {
+    position: absolute;
+    border: 2px solid #800000;
+}
+
+.worldmap-footer {
+    display: flex;
+    color: white;
+    border-left: 0;
+    border-right: 0;
+    border-bottom: 0;
+    border-image-width: 6px 0 0 0;
+    /* padding-left: 4px; */
+    align-items: flex-end;
+}
+
+.worldmap-zoom-button {
+    width: 36px;
+    height: 24px;
+    margin: 4px 4px 4px 0;
+    cursor: pointer;
+}
+
+.worldmap-zoom-out {
+    background-image: url(./zoom-out.png);
+}
+
+.worldmap-zoom-in {
+    background-image: url(./zoom-in.png);
+}
+
+.worldmap-location-select {
+    display: flex;
+    align-items: center;
+    height: 100%;
+}
+
+.osrs-select-container {
+    margin: 0 4px 0 4px;
+}
+
+@media (max-width: 340px) {
+    .hide-mobile {
+        display: none;
+    }
+    .worldmap-location-select {
+        flex: 1;
+        padding-right: 8px;
+    }
+    .worldmap-zoom-buttons {
+        flex: inherit;
+    }
+    .osrs-select-container {
+        /* display: none; */
+        /* width: 100px !important; */
+        min-width: 100% !important;
+    }
+}

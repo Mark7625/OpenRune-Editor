@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#00000000"/>
+  <g transform="translate(53.5, 0)">
+    <image href="./map-editor-logo-small.svg" x="0" y="0" width="405" height="512" preserveAspectRatio="xMidYMid meet"/>
+  </g>
+</svg>

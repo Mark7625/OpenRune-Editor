@@ -1,0 +1,122 @@
+.map-viewer-root {
+    position: relative;
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+    background: #171717;
+    background: var(--background, #171717);
+}
+
+.map-viewer-viewport {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+}
+
+.map-viewer-tools-dock {
+    width: min(420px, 42vw);
+    min-width: 280px;
+    max-width: 560px;
+    flex-shrink: 0;
+    min-height: 0;
+    z-index: 4;
+}
+
+.map-viewer-tools-dockview.dv-dockview {
+    --dv-paneview-header-height: 28px;
+}
+
+.map-viewer-root .map-viewer-viewport .renderer-canvas {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    min-width: 0;
+    min-height: 0;
+    background: #171717;
+    background: var(--background, #171717);
+}
+
+/* Full-size layer so HUD/minimap never participate in document flow (no push/squeeze of canvas). */
+.map-viewer-hud-layer {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    pointer-events: none;
+}
+
+.map-viewer-hud-layer .hud.left-top {
+    pointer-events: auto;
+}
+
+.overlay-container {
+    display: flex;
+    position: absolute;
+    left: 0;
+    top: 0;
+    justify-content: center;
+    align-items: center;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 3;
+}
+
+.hud.right-top {
+    position: absolute;
+    padding: 10px;
+    right: 0;
+    z-index: 2;
+}
+
+.joystick-container {
+    position: absolute;
+    bottom: 0;
+    padding: 40px;
+    z-index: 3;
+    pointer-events: auto;
+}
+
+.joystick-container.left {
+    left: 0;
+}
+
+.joystick-container.right {
+    right: 0;
+}
+
+.map-controls-panel {
+    pointer-events: auto;
+}
+
+.map-controls-scroll {
+    pointer-events: auto;
+    overscroll-behavior: contain;
+    touch-action: pan-y;
+    scrollbar-width: thin;
+    scrollbar-color: oklch(0.62 0 0 / 0.7) oklch(0.24 0 0 / 0.45);
+}
+
+.map-controls-scroll::-webkit-scrollbar {
+    width: 10px;
+}
+
+.map-controls-scroll::-webkit-scrollbar-track {
+    background: oklch(0.22 0 0 / 0.5);
+    border-radius: 999px;
+}
+
+.map-controls-scroll::-webkit-scrollbar-thumb {
+    background: oklch(0.7 0 0 / 0.7);
+    border: 2px solid transparent;
+    background-clip: padding-box;
+    border-radius: 999px;
+}
+
+.map-controls-scroll::-webkit-scrollbar-thumb:hover {
+    background: oklch(0.78 0 0 / 0.85);
+    background-clip: padding-box;
+}

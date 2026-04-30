@@ -1,0 +1,44 @@
+.worldmap-modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0, 0, 0, 0.3);
+    z-index: 1337; /* above controls */
+}
+
+.worldmap-modal {
+    position: absolute;
+    inset: 20px;
+    background-color: black;
+    overflow: auto;
+    -webkit-overflow-scrolling: "touch";
+    outline: none;
+}
+
+@media screen and (min-width: 480px) and (min-height: 300px) {
+    .worldmap-modal {
+        inset: 80px;
+    }
+}
+
+@media screen and (max-height: 300px) {
+    .worldmap-modal {
+        inset: 20px;
+    }
+}
+
+.worldmap-close-button {
+    position: absolute;
+    right: 0;
+    background-image: url(./close-button.png);
+    width: 24px;
+    height: 23px;
+    margin: 6px;
+    z-index: 10;
+}
+
+.worldmap-close-button:hover {
+    background-image: url(./close-button-hover.png);
+}

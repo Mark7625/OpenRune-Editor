@@ -1,0 +1,53 @@
+.map-editor-container {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+    flex: 1;
+    overflow: hidden;
+    background: #171717;
+    background: var(--background, #171717);
+}
+
+.map-editor-workbench-body {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.map-editor-workbench-dockview.dv-dockview {
+    --dv-paneview-header-height: 28px;
+}
+
+.map-editor-viewport-canvas-host .renderer-canvas {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    min-width: 0;
+    min-height: 0;
+    background: #171717;
+    background: var(--background, #171717);
+}
+
+.map-editor-hud {
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 2;
+    padding: 10px;
+    max-width: min(36rem, 100%);
+    box-sizing: border-box;
+    pointer-events: none;
+}
+
+.map-editor-hud .fps-counter {
+    display: block;
+    max-width: 100%;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
