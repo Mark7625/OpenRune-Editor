@@ -460,9 +460,6 @@ export class WebGLMapEditorRenderer extends MapEditorRenderer<EditorMapSquare> {
             this.host.seqTypeLoader,
             (performance.now() * 0.001) / 0.02,
         );
-        console.error(
-            `[editor-objects][${mapX},${mapY}] loaded drawRanges=${mapData.objectDrawRanges?.length ?? -1} alpha=${mapData.objectDrawRangesAlpha?.length ?? -1} indices=${mapData.objectIndices?.length ?? -1} verticesBytes=${mapData.objectVertices?.byteLength ?? -1} hasMultiDraw=${this.hasMultiDraw}`,
-        );
         // Worker builds tile meshes only for vertex generation; the live `Scene` on the main thread never
         // received `tileModel` until an edit ran `updateAffectedTiles`. Build CPU meshes up front so
         // overlay flood / footprint highlights work before the first paint.
@@ -557,14 +554,6 @@ export class WebGLMapEditorRenderer extends MapEditorRenderer<EditorMapSquare> {
 
         const inputManager = this.host.inputManager;
 
-        if (this.host.editorTool === "object" && inputManager.keysPressedThisFrame.has("MouseRight")) {
-            const count = this.getHoveredTileObjectCount();
-            if (count !== undefined) {
-                console.log(`Object tool: ${count} objects on hovered tile`);
-                this.host.debugText = `Objects: ${count}`;
-            }
-        }
-
         const paintMods = getActivePaintModifiers(this.host);
         if (
             paintMods.controlWheelAdjustsBrushSize &&
@@ -604,9 +593,6 @@ export class WebGLMapEditorRenderer extends MapEditorRenderer<EditorMapSquare> {
 
     render(time: number, deltaTime: number, resized: boolean): void {
         const frameCount = this.stats.frameCount;
-        if (frameCount === 0) {
-            console.error("[editor-objects] render loop active");
-        }
         const timeSec = time * 0.001;
 
         if (!this.sceneUniformBuffer) {
@@ -669,50 +655,7 @@ export class WebGLMapEditorRenderer extends MapEditorRenderer<EditorMapSquare> {
             this.lastTimeTerrainUpdated = time;
         }
 
-        // Keep this last so other per-frame debug writers do not overwrite object diagnostics.
-        this.updateObjectDebugHud();
-    }
-
-    private updateObjectDebugHud(): void {
-        let drawRanges = 0;
-        let drawRangesAlpha = 0;
-        let locTiles = 0;
-        let locEntries = 0;
-        let animatedLocs = 0;
-        let animatedAlive = 0;
-        for (let i = 0; i < this.mapManager.visibleMapCount; i++) {
-            const map = this.mapManager.visibleMaps[i];
-            drawRanges += map.objectDrawRanges?.length ?? 0;
-            drawRangesAlpha += map.objectDrawRangesAlpha?.length ?? 0;
-            animatedLocs += map.locsAnimated.length;
-            for (const loc of map.locsAnimated) {
-                if ((loc as any).seqType) {
-                    animatedAlive++;
-                }
-            }
-            const level = this.host.selectedLevel;
-            for (let tx = 0; tx < 64; tx++) {
-                for (let ty = 0; ty < 64; ty++) {
-                    const tile = map.scene.tiles[level][tx + map.borderSize][ty + map.borderSize];
-                    if (!tile) {
-                        continue;
-                    }
-                    const count =
-                        (tile.floorDecoration ? 1 : 0) +
-                        (tile.wall ? 1 : 0) +
-                        (tile.wallDecoration ? 1 : 0) +
-                        tile.locs.length;
-                    if (count > 0) {
-                        locTiles++;
-                        locEntries += count;
-                    }
-                }
-            }
-        }
-        this.host.debugText =
-            `ObjDbg maps:${this.mapManager.visibleMapCount} visible:${this.host.objectsVisible ? 1 : 0} md:${this.hasMultiDraw ? 1 : 0}\n` +
-            `ObjDbg draw:${drawRanges} alpha:${drawRangesAlpha}\n` +
-            `ObjDbg locTiles:${locTiles} locEntries:${locEntries} animLocs:${animatedLocs} animAlive:${animatedAlive}`;
+        this.host.debugText = undefined;
     }
 
     private handleTerrainSmoothingToggle(): void {
@@ -1190,12 +1133,9 @@ export class WebGLMapEditorRenderer extends MapEditorRenderer<EditorMapSquare> {
             if (isValid) {
                 this.hoverWorldX = worldX;
                 this.hoverWorldY = worldY;
-
-                this.host.debugText = `Map33: ${mapX}, ${mapY} Tile: ${tileX}, ${tileY} World: ${worldX}, ${worldY}`;
             } else {
                 this.hoverWorldX = -1;
                 this.hoverWorldY = -1;
-                this.host.debugText = "No tile selected";
             }
         }
 
@@ -1215,47 +1155,6 @@ export class WebGLMapEditorRenderer extends MapEditorRenderer<EditorMapSquare> {
         const tileX = (worldX % 64) + map.borderSize;
         const tileY = (worldY % 64) + map.borderSize;
         return scene.tileHeights[level][tileX][tileY];
-    }
-
-    private getHoveredTileObjectCount(): number | undefined {
-        if (this.hoverWorldX === -1 || this.hoverWorldY === -1) {
-            return undefined;
-        }
-
-        const mapX = Math.floor(this.hoverWorldX / 64);
-        const mapY = Math.floor(this.hoverWorldY / 64);
-        const map = this.mapManager.getMapById(getMapSquareId(mapX, mapY));
-        if (!map) {
-            return undefined;
-        }
-
-        const localX = ((this.hoverWorldX % 64) + 64) % 64;
-        const localY = ((this.hoverWorldY % 64) + 64) % 64;
-        const sceneX = localX + map.borderSize;
-        const sceneY = localY + map.borderSize;
-        const scene = map.scene;
-        if (sceneX < 0 || sceneX >= scene.sizeX || sceneY < 0 || sceneY >= scene.sizeY) {
-            return undefined;
-        }
-
-        let count = 0;
-        for (let level = 0; level < scene.levels; level++) {
-            const tile = scene.tiles[level][sceneX][sceneY];
-            if (!tile) {
-                continue;
-            }
-            count += tile.locs.length;
-            if (tile.floorDecoration) {
-                count += 1;
-            }
-            if (tile.wall) {
-                count += 1;
-            }
-            if (tile.wallDecoration) {
-                count += 1;
-            }
-        }
-        return count;
     }
 
     private forEachBrushOffset(fn: (dx: number, dy: number) => void): void {

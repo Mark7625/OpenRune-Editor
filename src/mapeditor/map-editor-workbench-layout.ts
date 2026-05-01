@@ -6,7 +6,7 @@ import type { MapEditorTool } from "./map-editor-kinds";
 import type { IEditorPluginHost } from "./plugins/editor-plugin-host";
 import { BUILTIN_WORKBENCH_UI_PLUGINS } from "./plugins/builtins/current-plugin-layout.builtin";
 
-const ALL_MAP_EDITOR_TOOLS: readonly MapEditorTool[] = ["underlay", "overlay", "height", "object"];
+const ALL_MAP_EDITOR_TOOLS: readonly MapEditorTool[] = ["underlay", "overlay", "height"];
 
 /** Dock panel for each paint tool’s palette tab. */
 export const EDITOR_TOOL_DOCK_PANEL: Partial<Record<MapEditorTool, MapEditorDockPanelId>> = {

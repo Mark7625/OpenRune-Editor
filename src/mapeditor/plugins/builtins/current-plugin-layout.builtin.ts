@@ -6,7 +6,6 @@ import {
     isInBuiltinBrushShape,
 } from "./brushes/brushes.registry";
 import { heightEditorTool } from "./height.plugin";
-import { objectEditorTool } from "./object.plugin";
 import { overlayEditorTool } from "./overlay.plugin";
 import { underlayEditorTool } from "./underlay.plugin";
 
@@ -14,7 +13,6 @@ export const BUILTIN_EDITOR_TOOL_PLUGINS: readonly EditorToolPlugin[] = [
     underlayEditorTool,
     overlayEditorTool,
     heightEditorTool,
-    objectEditorTool,
 ];
 
 const editorToolPluginById: Record<MapEditorTool, EditorToolPlugin> = {
@@ -22,7 +20,6 @@ const editorToolPluginById: Record<MapEditorTool, EditorToolPlugin> = {
     overlay: overlayEditorTool,
     height: heightEditorTool,
     smooth: heightEditorTool,
-    object: objectEditorTool,
 };
 
 export function getBuiltinEditorToolPlugin(tool: MapEditorTool): EditorToolPlugin {
