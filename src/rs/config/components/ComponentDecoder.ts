@@ -72,11 +72,9 @@ export class ComponentDecoder {
                 const component = this.readFast(file, buf);
 
                 const combinedId = (group << 16) | file;
-                const childID = combinedId & 0xFFFF;
+                const childID = combinedId & 0xffff;
 
-                const layerID = (group << 16) | component.layer;
-
-                component.layer = layerID;
+                component.layer = (group << 16) | component.layer;
                 component.internalId = combinedId;
                 component.id = childID;
 
@@ -88,7 +86,6 @@ export class ComponentDecoder {
                 components
             };
         }
-        console.log(JSON.stringify(result[523], null, 2));
         return result;
     }
 

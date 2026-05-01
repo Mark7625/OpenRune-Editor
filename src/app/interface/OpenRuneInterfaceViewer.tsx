@@ -1,40 +1,20 @@
 "use client";
 
 import * as React from "react";
-import {
-  Monitor,
-  Maximize2,
-  Search,
-  SlidersHorizontal,
-  Copy,
-  Check,
-  Eye,
-  Sparkles,
-  Braces,
-} from "lucide-react";
+import { Copy, Check } from "lucide-react";
 
 import { useCacheType } from "@/context/cache-type-context";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { cacheProxyHeaders } from "@/lib/cache-proxy-client";
-import { cn } from "@/lib/utils";
-import type { CacheIndex } from "@/rs/cache/CacheIndex";
-import { RsInterface, type RsInterfaceMode } from "@/components/ui/rs-interface";
+import type { RsInterfaceMode } from "@/components/ui/rs-interface";
 import { adaptInterfaceEntryFromApi, type ComponentType, type InterfaceEntry } from "@/lib/interface-renderer/component-types";
 import { openInterface, setCs1InterfaceEntry } from "@/lib/interface-renderer/interface-manager";
 import { applyCs2RuntimeFromSim } from "@/lib/interface-renderer/cs2/runtime-context";
 import { Cs1Interpreter } from "@/lib/interface-renderer/cs1-interpreter";
-import type {
-  VarbitDefinition,
-  VarbitDefinitionLookup,
-} from "@/rs/config/vartype/bit/VarBitTypeLoader";
-import type { GameVals } from "@/rs/config/gameval/GameVals";
+import type { VarbitDefinitionLookup } from "@/rs/config/vartype/bit/VarBitTypeLoader";
 import { GameValGroupType } from "@/rs/config/gameval/GameValGroupType";
 import type { Interface as InterfaceGameVal } from "@/rs/config/gameval/impl/Interface";
-import type { Sprite } from "@/rs/sprite/InterfaceCanvasSprite";
-import type { LoadedCache } from "@/mapviewer/Caches";
 import { InterfaceViewer } from "./InterfaceViewer";
 import { collectOnLoadScriptDiagnostics } from "@/lib/interface-renderer/cs2/on-load-script-diagnostics";
 import { getCs2RuntimeContext } from "@/lib/interface-renderer/cs2/runtime-context";
@@ -44,20 +24,21 @@ import {
   type Cs2LogLevel,
   type Cs2LogLine,
 } from "@/lib/interface-renderer/cs2/cs2-console-sink";
-import { Cs1SimulatePanel } from "./cs1-simulate-panel";
-import { Cs2ManualRunnerPanel } from "./cs2-manual-runner-panel";
+import {
+  InterfaceEditorWorkbenchProvider,
+  type InterfaceEditorWorkbench,
+  type InterfaceLegacyFilter,
+  type InterfaceListEntry,
+  type TreeNode,
+  type TreeRow,
+} from "./interface-editor-workbench-context";
+import { InterfaceEditorDock } from "./interface-editor-dock";
 
 function cs2DiagLineLevel(body: string): Cs2LogLevel {
   const u = body.toLowerCase();
   if (u.includes("missing") || u.includes("invalid") || u.includes("error")) return "warn";
   return "load";
 }
-
-type InterfaceListEntry = {
-  id: number;
-  name: string;
-  iflegacy: boolean | null;
-};
 
 /** Legacy flag for the interface group, matching index-3 combined ids used in `ComponentDecoder.loadLegacyMap`. */
 function interfaceRootLegacy(
@@ -77,136 +58,8 @@ function interfaceRootLegacy(
   return null;
 }
 
-type LocalInterfaceIndex =
-  | { status: "ok"; viewer: InterfaceViewer }
-  | { status: "error"; message: string };
-
-type InterfaceLegacyFilter = "all" | "new" | "legacy";
-
-type InterfaceViewerSettingsProps = {
-  mode: RsInterfaceMode;
-  setMode: React.Dispatch<React.SetStateAction<RsInterfaceMode>>;
-  showOverlays: boolean;
-  setShowOverlays: React.Dispatch<React.SetStateAction<boolean>>;
-  showViewportBorder: boolean;
-  setShowViewportBorder: React.Dispatch<React.SetStateAction<boolean>>;
-  showPixelGrid: boolean;
-  setShowPixelGrid: React.Dispatch<React.SetStateAction<boolean>>;
-  onViewportColorChange: (color: string) => void;
-};
-
-function InterfaceViewerSettings({
-  mode,
-  setMode,
-  showOverlays,
-  setShowOverlays,
-  showViewportBorder,
-  setShowViewportBorder,
-  showPixelGrid,
-  setShowPixelGrid,
-  onViewportColorChange,
-}: InterfaceViewerSettingsProps) {
-  const [viewportColorInput, setViewportColorInput] = React.useState("#171616");
-  const debouncedPickerColor = useDebouncedValue(viewportColorInput, 80);
-
-  React.useEffect(() => {
-    onViewportColorChange(debouncedPickerColor);
-  }, [debouncedPickerColor, onViewportColorChange]);
-
-  return (
-    <div className="flex items-center gap-1">
-      <Button
-        size="icon-xs"
-        variant={mode === "fixed" ? "default" : "outline"}
-        title="Fixed mode (512×334)"
-        onClick={() => setMode("fixed")}
-      >
-        <Monitor className="size-3.5" />
-      </Button>
-      <Button
-        size="icon-xs"
-        variant={mode === "resizable" ? "default" : "outline"}
-        title="Resizable mode"
-        onClick={() => setMode("resizable")}
-      >
-        <Maximize2 className="size-3.5" />
-      </Button>
-      <details className="group relative">
-        <summary className="flex h-6 w-6 cursor-pointer list-none items-center justify-center rounded-md border bg-background text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
-          <SlidersHorizontal className="size-3.5" />
-        </summary>
-        <div className="absolute right-0 z-20 mt-1 w-52 rounded-md border bg-popover p-2 text-xs shadow-md">
-          <label className="mb-2 flex items-center justify-between gap-2">
-            <span>Viewport color</span>
-            <input
-              type="color"
-              value={viewportColorInput}
-              onChange={(e) => setViewportColorInput(e.target.value)}
-              className="h-6 w-8 cursor-pointer rounded border bg-transparent p-0"
-            />
-          </label>
-          <label className="mb-1 flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={showOverlays}
-              onChange={(e) => setShowOverlays(e.target.checked)}
-            />
-            <span>Show UI overlays</span>
-          </label>
-          <label className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={showViewportBorder}
-              onChange={(e) => setShowViewportBorder(e.target.checked)}
-            />
-            <span>Show viewport border</span>
-          </label>
-          <label className="mt-1 flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={showPixelGrid}
-              onChange={(e) => setShowPixelGrid(e.target.checked)}
-            />
-            <span>Pixel lines</span>
-          </label>
-        </div>
-      </details>
-    </div>
-  );
-}
-
-type TreeNode = {
-  id: number;
-  runtimeId: number;
-  type: number;
-  dynamicCreated: boolean;
-  nodeKey: string;
-  component: ComponentType;
-  children: TreeNode[];
-};
-
 function runtimeId(comp: ComponentType): number {
   return typeof comp.packedId === "number" ? comp.packedId : comp.id;
-}
-
-const COMPONENT_TYPE_NAMES: Record<number, string> = {
-  0: "Container",
-  1: "Inventory",
-  2: "Item Grid",
-  3: "Rectangle",
-  4: "Text",
-  5: "Sprite",
-  6: "Model",
-  7: "Item Text",
-  8: "Tooltip",
-  9: "Line",
-  10: "Unknown10",
-  11: "Advanced Container",
-  12: "Input",
-};
-
-function componentTypeName(type: number): string {
-  return COMPONENT_TYPE_NAMES[type] ?? `Type ${type}`;
 }
 
 function buildComponentTree(entry: InterfaceEntry | null, fallbackRootLayer: number): TreeNode[] {
@@ -290,8 +143,8 @@ function unhideComponentSubtree(comp: ComponentType): void {
   }
 }
 
-function flattenTree(nodes: TreeNode[], depth = 0): Array<TreeNode & { depth: number }> {
-  const out: Array<TreeNode & { depth: number }> = [];
+function flattenTree(nodes: TreeNode[], depth = 0): TreeRow[] {
+  const out: TreeRow[] = [];
   const stack: Array<{ node: TreeNode; depth: number }> = [];
   for (let i = nodes.length - 1; i >= 0; i--) {
     stack.push({ node: nodes[i]!, depth });
@@ -442,43 +295,23 @@ function JsonDialog({ open, onOpenChange, componentData, componentId }: JsonDial
 }
 
 export type OpenRuneInterfaceViewerProps = {
-  /** Active session cache (index 3 interfaces decoded in-browser). */
-  loadedCache: LoadedCache;
-  /** Pre-decoded sprites from the session cache (DAT2 sprite index). */
-  spritesById?: ReadonlyMap<number, Sprite>;
-  /** DAT2 index 12 — client scripts (`getFile(scriptId, 0)`). */
-  clientScriptIndex?: CacheIndex | null;
-  /** Pre-decoded varbit definitions from the local cache (no per-id `load`). */
-  varbitDefinitions?: ReadonlyMap<number, VarbitDefinition> | null;
-  /** Local cache gamevals (index 24); inventory name search when non-null. */
-  gameVals?: GameVals | null;
+  /** Decoded interfaces, preloaded sprites/varbits/scripts, and cache handles. */
+  viewer: InterfaceViewer;
 };
 
-export function OpenRuneInterfaceViewer({
-  loadedCache,
-  spritesById = new Map<number, Sprite>(),
-  clientScriptIndex = null,
-  varbitDefinitions = null,
-  gameVals = null,
-}: OpenRuneInterfaceViewerProps) {
+export function OpenRuneInterfaceViewer({ viewer }: OpenRuneInterfaceViewerProps) {
+  const loadedCache = viewer.loadedCache;
   const varbitDefinitionLookup = React.useMemo<VarbitDefinitionLookup | null>(() => {
-    if (varbitDefinitions == null) return null;
-    return (id: number) => varbitDefinitions.get(id) ?? null;
-  }, [varbitDefinitions]);
+    const defs = viewer.varbitDefinitions;
+    if (defs == null) return null;
+    return (id: number) => defs.get(id) ?? null;
+  }, [viewer.varbitDefinitions]);
   const { selectedCacheType, cacheStatuses } = useCacheType();
 
   const revision = React.useMemo(() => {
     const status = cacheStatuses.get(selectedCacheType.id);
     return status?.statusResponse?.revision ?? "latest";
   }, [cacheStatuses, selectedCacheType.id]);
-
-  const localInterfaceIndex = React.useMemo<LocalInterfaceIndex>(() => {
-    try {
-      return { status: "ok", viewer: new InterfaceViewer(loadedCache) };
-    } catch (e) {
-      return { status: "error", message: e instanceof Error ? e.message : String(e) };
-    }
-  }, [loadedCache]);
 
   const [legacyFilter, setLegacyFilter] = React.useState<InterfaceLegacyFilter>("all");
 
@@ -490,7 +323,6 @@ export function OpenRuneInterfaceViewer({
   const [showViewportBorder, setShowViewportBorder] = React.useState(false);
   const [showPixelGrid, setShowPixelGrid] = React.useState(false);
   const [interactiveMode, setInteractiveMode] = React.useState(false);
-  const [componentPanelView, setComponentPanelView] = React.useState<"tree" | "simulate">("tree");
   /** When false (default), runtime/CS2-created widgets are omitted from the sidebar tree. */
   const [showGeneratedTreeRows, setShowGeneratedTreeRows] = React.useState(false);
   const [isInterfaceLoaded, setIsInterfaceLoaded] = React.useState(false);
@@ -540,10 +372,6 @@ export function OpenRuneInterfaceViewer({
     setIvExportBusy(true);
     window.setTimeout(() => {
       try {
-        const viewer =
-          localInterfaceIndex.status === "ok"
-            ? localInterfaceIndex.viewer
-            : new InterfaceViewer(loadedCache);
         const iface = viewer.interfaces[ifaceId];
         if (!iface) {
           setIvExportError(`No decoded interface for id ${ifaceId} in local index 3 (InterfaceViewer).`);
@@ -562,17 +390,13 @@ export function OpenRuneInterfaceViewer({
         setIvExportBusy(false);
       }
     }, 0);
-  }, [loadedCache, localInterfaceIndex, selectedId]);
+  }, [loadedCache, viewer, selectedId]);
 
   const entries = React.useMemo<InterfaceListEntry[]>(() => {
-    if (localInterfaceIndex.status !== "ok") {
-      return [];
-    }
-    const { viewer } = localInterfaceIndex;
     const gv = viewer.gamevals;
     try {
       // `getFastAs` reads `indexCache`, which is only filled after `get()` loads IFTYPES (or IFTYPES_V2 via resolveType).
-      gv.get(GameValGroupType.IFTYPES);
+      gv?.get(GameValGroupType.IFTYPES);
     } catch {
       /* no gameval index or unreadable — fall back to numeric labels */
     }
@@ -583,7 +407,7 @@ export function OpenRuneInterfaceViewer({
     return ids.map((id) => {
       const iface = viewer.interfaces[id]!;
       const gvName =
-        gv.getFastAs<InterfaceGameVal>(GameValGroupType.IFTYPES, id)?.name?.trim() ?? "";
+        gv?.getFastAs<InterfaceGameVal>(GameValGroupType.IFTYPES, id)?.name?.trim() ?? "";
       const fileIds = Object.keys(iface.components).map((k) => Number(k));
       return {
         id,
@@ -591,7 +415,7 @@ export function OpenRuneInterfaceViewer({
         iflegacy: interfaceRootLegacy(viewer.legacy, id, fileIds),
       };
     });
-  }, [localInterfaceIndex]);
+  }, [viewer]);
 
   React.useEffect(() => {
     if (selectedId == null) {
@@ -638,7 +462,7 @@ export function OpenRuneInterfaceViewer({
             data,
             undefined,
             undefined,
-            clientScriptIndex,
+            viewer.clientScriptIndex,
           );
           await openInterface(1, selectedId, 1);
           // Trigger React update after on-load scripts mutate widget tree in place.
@@ -666,7 +490,7 @@ export function OpenRuneInterfaceViewer({
       cancelled = true;
       controller.abort();
     };
-  }, [revision, selectedCacheType, selectedId, cs1SimState, varbitDefinitionLookup, clientScriptIndex]);
+  }, [revision, selectedCacheType, selectedId, cs1SimState, varbitDefinitionLookup, viewer.clientScriptIndex]);
 
   const filtered = React.useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -695,7 +519,7 @@ export function OpenRuneInterfaceViewer({
   }, [rootWidgetV3, cs1SimState]);
 
   const treeNodeByKey = React.useMemo(() => {
-    const map = new Map<string, TreeNode & { depth: number }>();
+    const map = new Map<string, TreeRow>();
     for (const row of componentTreeRows) {
       map.set(row.nodeKey, row);
     }
@@ -745,306 +569,101 @@ export function OpenRuneInterfaceViewer({
     [jsonDialogComponentNodeKey, treeNodeByKey]
   );
 
-  const listContent = React.useMemo(() => {
-    if (localInterfaceIndex.status === "error") {
-      return (
-        <div className="px-3 py-4 text-xs text-muted-foreground">
-          {localInterfaceIndex.message}
-        </div>
-      );
-    }
-    if (entries.length === 0) {
-      return (
-        <div className="px-3 py-4 text-xs text-muted-foreground">No interfaces decoded from cache.</div>
-      );
-    }
-    if (filtered.length === 0) {
-      return <div className="px-3 py-4 text-xs text-muted-foreground">No matches.</div>;
-    }
-    return filtered.map((entry) => (
-      <button
-        key={entry.id}
-        type="button"
-        onClick={() => setSelectedId(entry.id)}
-        className={cn(
-          "flex w-full items-center gap-2 border-b px-3 py-1.5 text-left text-xs hover:bg-muted/50",
-          selectedId === entry.id && "bg-muted",
-        )}
-      >
-        <span className="shrink-0 font-mono text-muted-foreground">{entry.id}</span>
-        <span className="truncate">{entry.name}</span>
-      </button>
-    ));
-  }, [entries.length, filtered, localInterfaceIndex, selectedId]);
+  const workbench = React.useMemo<InterfaceEditorWorkbench>(
+    () => ({
+      viewer,
+      selectedCacheType,
+      revision,
+      entries,
+      filtered,
+      search,
+      setSearch,
+      legacyFilter,
+      setLegacyFilter,
+      selectedId,
+      setSelectedId,
+      runInterfaceViewerExport,
+      mode,
+      setMode,
+      showOverlays,
+      setShowOverlays,
+      showViewportBorder,
+      setShowViewportBorder,
+      showPixelGrid,
+      setShowPixelGrid,
+      setViewportColor,
+      viewportColor,
+      interactiveMode,
+      setInteractiveMode,
+      isInterfaceLoaded,
+      interfaceLoadError,
+      interfaceData,
+      setInterfaceData,
+      rootWidgetV3,
+      selectedComponentNodeKey,
+      setSelectedComponentNodeKey,
+      selectedComponent,
+      selectedComponentId,
+      componentTreeRows,
+      componentTreeRowsForList,
+      showGeneratedTreeRows,
+      setShowGeneratedTreeRows,
+      unhideAllComponents,
+      handleComponentRightClick,
+      cs1SimState,
+      setCs1SimState,
+      cs1ForCanvas,
+      varbitDefinitionLookup,
+      cs2LogLines,
+      appendCs2LogLine,
+      clearCs2Log,
+      cs2RedrawNonce,
+      setCs2RedrawNonce,
+    }),
+    [
+      viewer,
+      selectedCacheType,
+      revision,
+      entries,
+      filtered,
+      search,
+      legacyFilter,
+      selectedId,
+      runInterfaceViewerExport,
+      mode,
+      showOverlays,
+      showViewportBorder,
+      showPixelGrid,
+      viewportColor,
+      interactiveMode,
+      isInterfaceLoaded,
+      interfaceLoadError,
+      interfaceData,
+      setInterfaceData,
+      rootWidgetV3,
+      selectedComponentNodeKey,
+      selectedComponent,
+      selectedComponentId,
+      componentTreeRows,
+      componentTreeRowsForList,
+      showGeneratedTreeRows,
+      unhideAllComponents,
+      handleComponentRightClick,
+      cs1SimState,
+      cs1ForCanvas,
+      varbitDefinitionLookup,
+      cs2LogLines,
+      appendCs2LogLine,
+      clearCs2Log,
+      cs2RedrawNonce,
+    ],
+  );
 
   return (
-    <div className="flex h-[calc(100vh-4rem)] min-h-0 overflow-hidden">
-      {/* ------------------------------------------------------------------ */}
-      {/* Sidebar                                                              */}
-      {/* ------------------------------------------------------------------ */}
-      <aside className="flex w-64 shrink-0 flex-col border-r bg-background">
-        {/* Header */}
-        <div className="flex items-center justify-between gap-2 border-b px-3 py-2">
-          <span className="text-sm font-semibold text-foreground">Interfaces</span>
-          <div className="flex shrink-0 items-center gap-1">
-            <Button
-              type="button"
-              size="icon-xs"
-              variant="outline"
-              disabled={selectedId == null}
-              title={
-                selectedId == null
-                  ? "Select an interface first"
-                  : "TEMP: JSON for selected interface from local InterfaceViewer (decode)"
-              }
-              onClick={runInterfaceViewerExport}
-            >
-              <Braces className="size-3.5" />
-            </Button>
-            <InterfaceViewerSettings
-              mode={mode}
-              setMode={setMode}
-              showOverlays={showOverlays}
-              setShowOverlays={setShowOverlays}
-              showViewportBorder={showViewportBorder}
-              setShowViewportBorder={setShowViewportBorder}
-              showPixelGrid={showPixelGrid}
-              setShowPixelGrid={setShowPixelGrid}
-              onViewportColorChange={setViewportColor}
-            />
-          </div>
-        </div>
-
-        <div className="border-b px-2 py-2">
-          <div className="flex items-center gap-2">
-            <div className="relative min-w-0 flex-1">
-              <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                className="h-7 pl-7 text-xs"
-                placeholder="Search interfaces…"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
-            </div>
-            <select
-              className="h-7 w-[112px] rounded-md border border-input bg-background px-2 text-xs"
-              value={legacyFilter}
-              onChange={(e) => setLegacyFilter(e.target.value as InterfaceLegacyFilter)}
-            >
-              <option value="all">All</option>
-              <option value="new">New</option>
-              <option value="legacy">Legacy</option>
-            </select>
-          </div>
-        </div>
-
-        {/* List */}
-        <div className="flex-1 overflow-y-auto">
-          {listContent}
-        </div>
-        <div className="border-t px-2 py-1 text-center text-[10px] text-muted-foreground">
-          Showing {filtered.length} of {entries.length}
-        </div>
-      </aside>
-
-      {/* ------------------------------------------------------------------ */}
-      {/* Viewer                                                               */}
-      {/* ------------------------------------------------------------------ */}
-      <div className="flex min-w-0 flex-1 flex-col">
-        {/* Toolbar */}
-        <div className="flex items-center gap-3 border-b px-4 py-2 text-xs text-muted-foreground">
-          {selectedId != null ? (
-            <>
-              <span className="font-mono font-semibold text-foreground">{selectedId}</span>
-              <span>
-                {entries.find((e) => e.id === selectedId)?.name ?? ""}
-              </span>
-              {rootWidgetV3 != null ? (
-                <span
-                  className="rounded border border-border bg-muted/40 px-1.5 py-0.5 text-[10px] text-muted-foreground"
-                  title={rootWidgetV3 ? "IF3 interface (not legacy)" : "Legacy interface (pre-IF3)"}
-                >
-                  {rootWidgetV3 ? "Not legacy" : "Legacy"}
-                </span>
-              ) : null}
-              <span className="ml-auto">
-                {mode === "fixed" ? "Fixed  512 × 334" : "Resizable"}
-              </span>
-              {interfaceLoadError ? (
-                <span className="ml-2 text-destructive">{interfaceLoadError}</span>
-              ) : null}
-              {selectedComponentId != null ? (
-                <span className="ml-2 text-cyan-400">selected component {selectedComponentId}</span>
-              ) : null}
-              <Button
-                type="button"
-                variant={interactiveMode ? "default" : "outline"}
-                size="sm"
-                className="ml-2 h-7 text-xs"
-                onClick={() => setInteractiveMode((v) => !v)}
-              >
-                Interactive mode
-              </Button>
-            </>
-          ) : (
-            <span>Select an interface from the list</span>
-          )}
-        </div>
-
-        {/* Canvas */}
-        <div className="flex min-h-0 flex-1 items-center justify-center bg-black/80 p-4">
-          {selectedId != null ? (
-            <RsInterface
-              interfaceId={selectedId}
-              mode={mode}
-              isInterfaceLoaded={isInterfaceLoaded}
-              interfaceData={interfaceData}
-              revision={revision}
-              cacheHeaders={cacheProxyHeaders(selectedCacheType)}
-              spritesById={spritesById}
-              clientScriptIndex={clientScriptIndex}
-              viewportColor={viewportColor}
-              showOverlays={showOverlays}
-              showViewportBorder={showViewportBorder}
-              showPixelGrid={showPixelGrid}
-              selectedComponentId={selectedComponentId}
-              selectedComponent={selectedComponent}
-              interactiveMode={interactiveMode}
-              cs1SimState={cs1ForCanvas}
-              cs1VarbitDefinitionLookup={varbitDefinitionLookup}
-              cs2RedrawNonce={cs2RedrawNonce}
-              className={mode === "resizable" ? "h-full w-full" : "shrink-0"}
-            />
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              Select an interface to preview it here.
-            </p>
-          )}
-        </div>
-      </div>
-
-      <aside className="flex w-80 shrink-0 flex-col border-l bg-background">
-        <div className="border-b px-3 py-2">
-          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-            <span className="text-sm font-semibold text-foreground">Components</span>
-            <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
-              <Button
-                type="button"
-                size="sm"
-                variant={showGeneratedTreeRows ? "default" : "outline"}
-                className="h-7 gap-1 px-2 text-[11px]"
-                title="Show widgets created at runtime (CS2) in this list — marked with * when visible"
-                disabled={!isInterfaceLoaded || !interfaceData}
-                onClick={() => setShowGeneratedTreeRows((v) => !v)}
-              >
-                <Sparkles className="size-3.5" />
-                Generated
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="h-7 gap-1 px-2 text-[11px]"
-                title="Set hide=false on every widget (preview / editor)"
-                disabled={!isInterfaceLoaded || !interfaceData}
-                onClick={unhideAllComponents}
-              >
-                <Eye className="size-3.5" />
-                Unhide all
-              </Button>
-            </div>
-          </div>
-          <div className="flex items-center gap-1">
-            <Button
-              type="button"
-              size="sm"
-              variant={componentPanelView === "tree" ? "default" : "outline"}
-              className="h-7 flex-1 px-1.5 text-[11px]"
-              onClick={() => setComponentPanelView("tree")}
-            >
-              Component view
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant={componentPanelView === "simulate" ? "default" : "outline"}
-              className="h-7 flex-1 px-1.5 text-[11px]"
-              onClick={() => setComponentPanelView("simulate")}
-            >
-              Client script simulate
-            </Button>
-          </div>
-        </div>
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          {componentPanelView === "tree" ? (
-            !selectedId ? (
-              <div className="px-3 py-4 text-xs text-muted-foreground">Select an interface first.</div>
-            ) : !isInterfaceLoaded ? (
-              <div className="px-3 py-4 text-xs text-muted-foreground">Loading component tree…</div>
-            ) : componentTreeRows.length === 0 ? (
-              <div className="px-3 py-4 text-xs text-muted-foreground">No component nodes found.</div>
-            ) : componentTreeRowsForList.length === 0 ? (
-              <div className="px-3 py-4 text-xs text-muted-foreground">
-                No components match the current filter. Turn on &quot;Generated&quot; to include runtime-created widgets.
-              </div>
-            ) : (
-              componentTreeRowsForList.map((row) => (
-                <button
-                  key={row.nodeKey}
-                  type="button"
-                  onClick={() => setSelectedComponentNodeKey(row.nodeKey)}
-                  onContextMenu={(e) => handleComponentRightClick(e, row.nodeKey)}
-                  className={cn(
-                    "flex w-full items-center gap-2 border-b px-3 py-1.5 text-left text-xs hover:bg-muted/50",
-                    selectedComponentNodeKey === row.nodeKey && "bg-cyan-500/10",
-                  )}
-                  style={{ paddingLeft: `${12 + row.depth * 14}px` }}
-                >
-                  <span className="shrink-0 font-mono text-muted-foreground">{row.id}</span>
-                  <span className="truncate">{componentTypeName(row.type)}{row.dynamicCreated ? " *" : ""}</span>
-                </button>
-              ))
-            )
-          ) : !selectedId ? (
-            <div className="px-3 py-4 text-xs text-muted-foreground">Select an interface first.</div>
-          ) : !isInterfaceLoaded ? (
-            <div className="px-3 py-4 text-xs text-muted-foreground">Loading…</div>
-          ) : rootWidgetV3 === true ? (
-            <Cs2ManualRunnerPanel
-              interfaceData={interfaceData}
-              interfaceRootId={selectedId}
-              onAfterRun={() => setCs2RedrawNonce((n) => n + 1)}
-              logLines={cs2LogLines}
-              appendLogLine={appendCs2LogLine}
-              onClearLog={clearCs2Log}
-            />
-          ) : rootWidgetV3 === false ? (
-            <Cs1SimulatePanel
-              state={cs1SimState}
-              onChange={setCs1SimState}
-              interfaceData={interfaceData}
-              revision={revision}
-              gameVals={gameVals}
-              spritesById={spritesById}
-            />
-          ) : (
-            <>
-              <div className="px-3 py-2 text-xs text-muted-foreground">
-                Could not determine legacy vs IF3 for this interface. CS1 simulator is hidden; you can still run CS2
-                manually below.
-              </div>
-              <Cs2ManualRunnerPanel
-                interfaceData={interfaceData}
-                interfaceRootId={selectedId}
-                onAfterRun={() => setCs2RedrawNonce((n) => n + 1)}
-                logLines={cs2LogLines}
-                appendLogLine={appendCs2LogLine}
-                onClearLog={clearCs2Log}
-              />
-            </>
-          )}
-        </div>
-      </aside>
+    <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
+      <InterfaceEditorWorkbenchProvider value={workbench}>
+        <InterfaceEditorDock />
+      </InterfaceEditorWorkbenchProvider>
 
       <JsonDialog
         open={jsonDialogOpen}

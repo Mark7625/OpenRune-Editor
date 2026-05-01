@@ -1,0 +1,8 @@
+.interface-editor-workbench-dockview.dv-dockview {
+  --dv-paneview-header-height: 28px;
+}
+
+.interface-editor-workbench-dockview .dv-react-part {
+  min-height: 0;
+  min-width: 0;
+}
