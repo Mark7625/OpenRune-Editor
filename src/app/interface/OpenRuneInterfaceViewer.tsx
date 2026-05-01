@@ -31,6 +31,8 @@ import type {
   VarbitDefinitionLookup,
 } from "@/rs/config/vartype/bit/VarBitTypeLoader";
 import type { GameVals } from "@/rs/config/gameval/GameVals";
+import { GameValGroupType } from "@/rs/config/gameval/GameValGroupType";
+import type { Interface as InterfaceGameVal } from "@/rs/config/gameval/impl/Interface";
 import type { Sprite } from "@/rs/sprite/InterfaceCanvasSprite";
 import type { LoadedCache } from "@/mapviewer/Caches";
 import { InterfaceViewer } from "./InterfaceViewer";
@@ -45,28 +47,39 @@ import {
 import { Cs1SimulatePanel } from "./cs1-simulate-panel";
 import { Cs2ManualRunnerPanel } from "./cs2-manual-runner-panel";
 
-type InterfaceManifestRow = {
-  interfaceId: number;
-  gameval: string | null;
-  iflegacy: boolean | null;
-};
-
 function cs2DiagLineLevel(body: string): Cs2LogLevel {
   const u = body.toLowerCase();
   if (u.includes("missing") || u.includes("invalid") || u.includes("error")) return "warn";
   return "load";
 }
 
-type InterfaceManifestResponse = {
-  rev: number;
-  rows: InterfaceManifestRow[];
-};
-
 type InterfaceListEntry = {
   id: number;
   name: string;
   iflegacy: boolean | null;
 };
+
+/** Legacy flag for the interface group, matching index-3 combined ids used in `ComponentDecoder.loadLegacyMap`. */
+function interfaceRootLegacy(
+  legacy: Record<number, boolean>,
+  groupId: number,
+  componentFileIds: number[],
+): boolean | null {
+  if (componentFileIds.length === 0) return null;
+  const files = [...componentFileIds].sort((a, b) => a - b);
+  const tryOrder = files.includes(0) ? [0, ...files.filter((f) => f !== 0)] : files;
+  for (const file of tryOrder) {
+    const combined = (groupId << 16) | (file & 0xffff);
+    if (Object.prototype.hasOwnProperty.call(legacy, combined)) {
+      return legacy[combined]!;
+    }
+  }
+  return null;
+}
+
+type LocalInterfaceIndex =
+  | { status: "ok"; viewer: InterfaceViewer }
+  | { status: "error"; message: string };
 
 type InterfaceLegacyFilter = "all" | "new" | "legacy";
 
@@ -429,6 +442,8 @@ function JsonDialog({ open, onOpenChange, componentData, componentId }: JsonDial
 }
 
 export type OpenRuneInterfaceViewerProps = {
+  /** Active session cache (index 3 interfaces decoded in-browser). */
+  loadedCache: LoadedCache;
   /** Pre-decoded sprites from the session cache (DAT2 sprite index). */
   spritesById?: ReadonlyMap<number, Sprite>;
   /** DAT2 index 12 — client scripts (`getFile(scriptId, 0)`). */
@@ -437,17 +452,15 @@ export type OpenRuneInterfaceViewerProps = {
   varbitDefinitions?: ReadonlyMap<number, VarbitDefinition> | null;
   /** Local cache gamevals (index 24); inventory name search when non-null. */
   gameVals?: GameVals | null;
-  /** Local profile cache; when set, enables temp export of `InterfaceViewer` decode (`interfaces` + `legacy`). */
-  loadedCache?: LoadedCache | null;
 };
 
 export function OpenRuneInterfaceViewer({
+  loadedCache,
   spritesById = new Map<number, Sprite>(),
   clientScriptIndex = null,
   varbitDefinitions = null,
   gameVals = null,
-  loadedCache = null,
-}: OpenRuneInterfaceViewerProps = {}) {
+}: OpenRuneInterfaceViewerProps) {
   const varbitDefinitionLookup = React.useMemo<VarbitDefinitionLookup | null>(() => {
     if (varbitDefinitions == null) return null;
     return (id: number) => varbitDefinitions.get(id) ?? null;
@@ -458,9 +471,15 @@ export function OpenRuneInterfaceViewer({
     const status = cacheStatuses.get(selectedCacheType.id);
     return status?.statusResponse?.revision ?? "latest";
   }, [cacheStatuses, selectedCacheType.id]);
-  const [manifestRows, setManifestRows] = React.useState<InterfaceManifestRow[]>([]);
-  const [manifestLoading, setManifestLoading] = React.useState(false);
-  const [manifestError, setManifestError] = React.useState<string | null>(null);
+
+  const localInterfaceIndex = React.useMemo<LocalInterfaceIndex>(() => {
+    try {
+      return { status: "ok", viewer: new InterfaceViewer(loadedCache) };
+    } catch (e) {
+      return { status: "error", message: e instanceof Error ? e.message : String(e) };
+    }
+  }, [loadedCache]);
+
   const [legacyFilter, setLegacyFilter] = React.useState<InterfaceLegacyFilter>("all");
 
   const [search, setSearch] = React.useState("");
@@ -505,7 +524,6 @@ export function OpenRuneInterfaceViewer({
   const [ivExportInterfaceId, setIvExportInterfaceId] = React.useState<number | null>(null);
 
   const runInterfaceViewerExport = React.useCallback(() => {
-    if (!loadedCache) return;
     if (selectedId == null) {
       setIvExportInterfaceId(null);
       setIvExportOpen(true);
@@ -522,7 +540,10 @@ export function OpenRuneInterfaceViewer({
     setIvExportBusy(true);
     window.setTimeout(() => {
       try {
-        const viewer = new InterfaceViewer(loadedCache);
+        const viewer =
+          localInterfaceIndex.status === "ok"
+            ? localInterfaceIndex.viewer
+            : new InterfaceViewer(loadedCache);
         const iface = viewer.interfaces[ifaceId];
         if (!iface) {
           setIvExportError(`No decoded interface for id ${ifaceId} in local index 3 (InterfaceViewer).`);
@@ -541,56 +562,36 @@ export function OpenRuneInterfaceViewer({
         setIvExportBusy(false);
       }
     }, 0);
-  }, [loadedCache, selectedId]);
+  }, [loadedCache, localInterfaceIndex, selectedId]);
 
-  React.useEffect(() => {
-    const controller = new AbortController();
-    let cancelled = false;
-    setManifestLoading(true);
-    setManifestError(null);
-    setManifestRows([]);
-
-    const rev = encodeURIComponent(String(revision));
-    const url = `/api/cache-proxy/diff/interface/manifest?rev=${rev}`;
-    void fetch(url, {
-      method: "GET",
-      headers: cacheProxyHeaders(selectedCacheType),
-      signal: controller.signal,
-      cache: "no-store",
-    })
-      .then(async (res) => {
-        if (!res.ok) throw new Error(`Failed to load interface manifest (${res.status})`);
-        const payload = (await res.json()) as InterfaceManifestResponse;
-        if (cancelled) return;
-        const rows = Array.isArray(payload.rows) ? payload.rows : [];
-        setManifestRows(rows);
-        setManifestLoading(false);
-      })
-      .catch((error: unknown) => {
-        if (cancelled) return;
-        if (error instanceof Error && error.name === "AbortError") return;
-        setManifestRows([]);
-        setManifestLoading(false);
-        setManifestError(error instanceof Error ? error.message : "Failed to load interface manifest");
-      });
-
-    return () => {
-      cancelled = true;
-      controller.abort();
-    };
-  }, [revision, selectedCacheType]);
-
-  const entries = React.useMemo<InterfaceListEntry[]>(
-    () =>
-      manifestRows
-        .map((row) => ({
-          id: row.interfaceId,
-          name: row.gameval?.trim() || `Interface ${row.interfaceId}`,
-          iflegacy: row.iflegacy,
-        }))
-        .sort((a, b) => a.id - b.id),
-    [manifestRows],
-  );
+  const entries = React.useMemo<InterfaceListEntry[]>(() => {
+    if (localInterfaceIndex.status !== "ok") {
+      return [];
+    }
+    const { viewer } = localInterfaceIndex;
+    const gv = viewer.gamevals;
+    try {
+      // `getFastAs` reads `indexCache`, which is only filled after `get()` loads IFTYPES (or IFTYPES_V2 via resolveType).
+      gv.get(GameValGroupType.IFTYPES);
+    } catch {
+      /* no gameval index or unreadable — fall back to numeric labels */
+    }
+    const ids = Object.keys(viewer.interfaces)
+      .map((k) => Number(k))
+      .filter((id) => Number.isFinite(id))
+      .sort((a, b) => a - b);
+    return ids.map((id) => {
+      const iface = viewer.interfaces[id]!;
+      const gvName =
+        gv.getFastAs<InterfaceGameVal>(GameValGroupType.IFTYPES, id)?.name?.trim() ?? "";
+      const fileIds = Object.keys(iface.components).map((k) => Number(k));
+      return {
+        id,
+        name: gvName || `Interface ${id}`,
+        iflegacy: interfaceRootLegacy(viewer.legacy, id, fileIds),
+      };
+    });
+  }, [localInterfaceIndex]);
 
   React.useEffect(() => {
     if (selectedId == null) {
@@ -745,18 +746,17 @@ export function OpenRuneInterfaceViewer({
   );
 
   const listContent = React.useMemo(() => {
-    if (manifestLoading) {
-      return <div className="px-3 py-4 text-xs text-muted-foreground">Loading interfaces…</div>;
-    }
-    if (manifestError) {
+    if (localInterfaceIndex.status === "error") {
       return (
         <div className="px-3 py-4 text-xs text-muted-foreground">
-          {manifestError}
+          {localInterfaceIndex.message}
         </div>
       );
     }
     if (entries.length === 0) {
-      return <div className="px-3 py-4 text-xs text-muted-foreground">No interfaces in manifest.</div>;
+      return (
+        <div className="px-3 py-4 text-xs text-muted-foreground">No interfaces decoded from cache.</div>
+      );
     }
     if (filtered.length === 0) {
       return <div className="px-3 py-4 text-xs text-muted-foreground">No matches.</div>;
@@ -775,7 +775,7 @@ export function OpenRuneInterfaceViewer({
         <span className="truncate">{entry.name}</span>
       </button>
     ));
-  }, [entries.length, filtered, manifestError, manifestLoading, selectedId]);
+  }, [entries.length, filtered, localInterfaceIndex, selectedId]);
 
   return (
     <div className="flex h-[calc(100vh-4rem)] min-h-0 overflow-hidden">
@@ -787,22 +787,20 @@ export function OpenRuneInterfaceViewer({
         <div className="flex items-center justify-between gap-2 border-b px-3 py-2">
           <span className="text-sm font-semibold text-foreground">Interfaces</span>
           <div className="flex shrink-0 items-center gap-1">
-            {loadedCache ? (
-              <Button
-                type="button"
-                size="icon-xs"
-                variant="outline"
-                disabled={selectedId == null}
-                title={
-                  selectedId == null
-                    ? "Select an interface first"
-                    : "TEMP: JSON for selected interface from local InterfaceViewer (decode)"
-                }
-                onClick={runInterfaceViewerExport}
-              >
-                <Braces className="size-3.5" />
-              </Button>
-            ) : null}
+            <Button
+              type="button"
+              size="icon-xs"
+              variant="outline"
+              disabled={selectedId == null}
+              title={
+                selectedId == null
+                  ? "Select an interface first"
+                  : "TEMP: JSON for selected interface from local InterfaceViewer (decode)"
+              }
+              onClick={runInterfaceViewerExport}
+            >
+              <Braces className="size-3.5" />
+            </Button>
             <InterfaceViewerSettings
               mode={mode}
               setMode={setMode}
