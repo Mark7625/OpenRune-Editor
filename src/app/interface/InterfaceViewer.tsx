@@ -4,14 +4,13 @@ import { ComponentDecoder } from "../../rs/config/components/ComponentDecoder";
 import { InterfaceType } from "../../rs/config/components/InterfaceType";
 import { GameVals } from "../../rs/config/gameval/GameVals";
 
-
 export class InterfaceViewer {
     loadedCache!: LoadedCache;
     cacheSystem!: CacheSystem;
     gamevals!: GameVals;
 
     interfaces!: Record<number, InterfaceType>;
-    legacy!: Record<number, Boolean>;
+    legacy!: Record<number, boolean>;
 
     constructor(cache: LoadedCache) {
         this.initCache(cache);

@@ -1,4 +1,4 @@
-"use client";
+ï»¿"use client";
 
 import { Maximize2, Monitor, Search, SlidersHorizontal } from "lucide-react";
 import * as React from "react";
@@ -11,17 +11,12 @@ import { cn } from "../../lib/utils";
 import { GameValGroupType } from "../../rs/config/gameval/GameValGroupType";
 import { Interface } from "../../rs/config/gameval/impl/Interface";
 import { RsInterface, RsInterfaceMode } from "./RsInterface";
-
+import type { InterfaceViewer } from "./InterfaceViewer";
 
 type InterfaceLegacyFilter = "all" | "new" | "legacy";
 
 type Props = {
-    viewer: {
-        gamevals?: any;
-        interfaces?: Record<number, Interface>;
-        legacy?: Record<number, Boolean>;
-        isLoaded?: boolean;
-    };
+    viewer: InterfaceViewer;
 };
 
 const COMPONENT_TYPE_NAMES: Record<number, string> = {
@@ -289,7 +284,7 @@ export function InterfaceViewerContainer({ viewer }: Props) {
                             <span className="font-mono">{selectedId}</span>
                             <span>{interfaces.find((i) => i.id === selectedId)?.name}</span>
 
-                            {/* ✅ LEGACY BADGE RESTORED */}
+                            {/* Legacy / new badge from decoded interface shape */}
                             {selectedMeta && (
                                 <span
                                     className={cn(

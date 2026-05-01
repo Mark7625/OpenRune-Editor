@@ -1,12 +1,18 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+
 import { OsrsLoadingBar } from "../../components/rs/loading/OsrsLoadingBar";
+import { CacheTypeProvider } from "../../context/cache-type-context";
+import { GamevalProvider } from "../../context/gameval-context";
 import { getActiveProfileIdAsync, loadLocalCacheProfilesAsync } from "../../lib/local-cache-profiles";
 import { resolveActiveProfileCache } from "../../lib/resolve-active-profile-cache";
-import { InterfaceViewer } from "./InterfaceViewer";
-import { InterfaceViewerContainer } from "./InterfaceViewerContainer";
+import type { LoadedCache } from "../../mapviewer/Caches";
+import { OpenRuneInterfaceViewer } from "./OpenRuneInterfaceViewer";
 
-
+type InterfaceEditorSession = {
+    profileId: string;
+    cache: LoadedCache;
+};
 
 function InterfaceEditorApp(): JSX.Element {
     const navigate = useNavigate();
@@ -15,7 +21,7 @@ function InterfaceEditorApp(): JSX.Element {
     const [errorMessage, setErrorMessage] = useState<string>();
     const [loadingLabel, setLoadingLabel] = useState<string>("Loading selected cache...");
     const [loadingProgress, setLoadingProgress] = useState<number>(0);
-    const [mapViewer, setMapViewer] = useState<InterfaceViewer>();
+    const [session, setSession] = useState<InterfaceEditorSession>();
 
     // Same as map editor: do not key the loader on `location.search` or camera URL sync remounts the viewer.
     useEffect(() => {
@@ -56,11 +62,11 @@ function InterfaceEditorApp(): JSX.Element {
             setLoadingLabel(`Using "${activeProfile.name}" cache...`);
             setLoadingProgress(45);
 
-            let cache;
+            let cache: LoadedCache;
 
             try {
                 const cachePromise = Promise.resolve(resolvedCache).then((loaded) => {
-                    setLoadingLabel("Loading world data...");
+                    setLoadingLabel("Loading interface data...");
                     setLoadingProgress(70);
                     return loaded;
                 });
@@ -78,11 +84,10 @@ function InterfaceEditorApp(): JSX.Element {
                 throw error;
             }
 
-            const mapViewer = new InterfaceViewer(cache);
-
-            setLoadingLabel("Starting renderer...");
+            // Local profile cache is resolved (runtime + IndexedDB). Viewer uses cache-proxy + gameval APIs.
+            setLoadingLabel("Starting interface viewer...");
             setLoadingProgress(100);
-            setMapViewer(mapViewer);
+            setSession({ profileId: activeProfileId, cache });
         };
 
         load().catch((error) => {
@@ -101,8 +106,14 @@ function InterfaceEditorApp(): JSX.Element {
     let content: JSX.Element | undefined;
     if (errorMessage) {
         content = <div className="center-container max-height content-text">{errorMessage}</div>;
-    } else if (mapViewer) {
-        content = <InterfaceViewerContainer viewer={mapViewer} />;
+    } else if (session) {
+        content = (
+            <CacheTypeProvider key={`${session.profileId}-${session.cache.info.name}`}>
+                <GamevalProvider>
+                    <OpenRuneInterfaceViewer />
+                </GamevalProvider>
+            </CacheTypeProvider>
+        );
     } else {
         content = (
             <div className="center-container max-height">
