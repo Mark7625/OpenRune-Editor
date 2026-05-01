@@ -110,8 +110,7 @@ export interface ComponentType {
     onVarTransmitList?: number[];
     onInvTransmitList?: number[];
     onStatTransmitList?: number[];
-    children?: ComponentType[] | null;
-    packedId: number;
+    internalId: number;
     id: number;
 
     tempWidth: number;

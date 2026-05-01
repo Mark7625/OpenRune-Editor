@@ -12,8 +12,9 @@ import {
 } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { spritesProxyUrl } from "@/lib/cache-proxy-client";
 import { Cs1Interpreter, type Cs1SimState } from "@/lib/interface-renderer/cs1-interpreter";
+import type { GameVals } from "@/rs/config/gameval/GameVals";
+import type { Sprite } from "@/rs/sprite/InterfaceCanvasSprite";
 import { cn } from "@/lib/utils";
 
 import { OSRS_WIKI_SKILL_ICON_FILES, osrsWikiSkillIconUrl } from "./cs1-skill-icons";
@@ -56,7 +57,25 @@ type Cs1SimulatePanelProps = {
   onChange: React.Dispatch<React.SetStateAction<Cs1SimState>>;
   interfaceData: InterfaceEntry | null;
   revision: number | "latest";
+  gameVals?: GameVals | null;
+  spritesById: ReadonlyMap<number, Sprite>;
 };
+
+function spriteToPngDataUrl(sprite: Sprite | undefined | null): string | null {
+  if (!sprite?.loaded || sprite.subWidth <= 0 || sprite.subHeight <= 0) return null;
+  const canvas = document.createElement("canvas");
+  canvas.width = sprite.subWidth;
+  canvas.height = sprite.subHeight;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
+  const rgba = new Uint8ClampedArray(sprite.toRgba());
+  ctx.putImageData(new ImageData(rgba, sprite.subWidth, sprite.subHeight), 0, 0);
+  try {
+    return canvas.toDataURL("image/png");
+  } catch {
+    return null;
+  }
+}
 
 function WikiSkillIcon({ fileName }: { fileName: string }) {
   const [failed, setFailed] = React.useState(false);
@@ -88,25 +107,17 @@ function WikiSkillIcon({ fileName }: { fileName: string }) {
 }
 
 function GeneralIconButton({
-  iconId,
-  spriteRev,
+  sprite,
   tooltip,
   ariaLabel,
   enabled,
 }: {
-  iconId: number;
-  spriteRev: number | undefined;
+  sprite: Sprite | undefined;
   tooltip: string;
   ariaLabel: string;
   enabled: boolean;
 }) {
-  const spriteSrc = spritesProxyUrl({
-    id: iconId,
-    width: 24,
-    height: 24,
-    keepAspectRatio: true,
-    rev: typeof spriteRev === "number" ? spriteRev : undefined,
-  });
+  const spriteSrc = React.useMemo(() => spriteToPngDataUrl(sprite) ?? "", [sprite]);
 
   const button = (
     <button
@@ -115,13 +126,17 @@ function GeneralIconButton({
       aria-label={ariaLabel}
       disabled={!enabled}
     >
-      <img
-        src={spriteSrc}
-        alt=""
-        width={24}
-        height={24}
-        className="pointer-events-none max-h-full max-w-full rounded object-contain"
-      />
+      {spriteSrc ? (
+        <img
+          src={spriteSrc}
+          alt=""
+          width={24}
+          height={24}
+          className="pointer-events-none max-h-full max-w-full rounded object-contain"
+        />
+      ) : (
+        <div className="size-6 rounded bg-muted/60" title="Sprite not in cache" />
+      )}
     </button>
   );
 
@@ -215,7 +230,14 @@ function SkillTile({
   );
 }
 
-export function Cs1SimulatePanel({ state, onChange, interfaceData, revision }: Cs1SimulatePanelProps) {
+export function Cs1SimulatePanel({
+  state,
+  onChange,
+  interfaceData,
+  revision,
+  gameVals = null,
+  spritesById,
+}: Cs1SimulatePanelProps) {
   const patchAt = React.useCallback(
     (index: number, field: "currentLevels" | "maximumLevels" | "currentExp", value: number) => {
       onChange((prev) => {
@@ -251,8 +273,6 @@ export function Cs1SimulatePanel({ state, onChange, interfaceData, revision }: C
     },
     [onChange],
   );
-
-  const spriteRev = typeof revision === "number" ? revision : undefined;
 
   const hasAnyCs1Scripts = React.useMemo(() => Cs1Interpreter.interfaceUsesCs1(interfaceData), [interfaceData]);
   const generalUsed = React.useMemo(
@@ -320,8 +340,7 @@ export function Cs1SimulatePanel({ state, onChange, interfaceData, revision }: C
             <div className="grid gap-2">
               <div className="flex items-center gap-2">
                 <GeneralIconButton
-                  iconId={CS1_GENERAL_SPRITE_COMBAT}
-                  spriteRev={spriteRev}
+                  sprite={spritesById.get(CS1_GENERAL_SPRITE_COMBAT)}
                   ariaLabel="Combat level — more info"
                   enabled={generalUsed}
                   tooltip="Your combat level. The renderer uses this value anywhere the interface expects your combat level (requirements, text, visibility)."
@@ -339,8 +358,7 @@ export function Cs1SimulatePanel({ state, onChange, interfaceData, revision }: C
               </div>
               <div className="flex items-center gap-2">
                 <GeneralIconButton
-                  iconId={CS1_GENERAL_SPRITE_RUN}
-                  spriteRev={spriteRev}
+                  sprite={spritesById.get(CS1_GENERAL_SPRITE_RUN)}
                   ariaLabel="Run energy — more info"
                   enabled={generalUsed}
                   tooltip="Run energy from 0-100. Used when the interface reads how much run energy you have left."
@@ -358,8 +376,7 @@ export function Cs1SimulatePanel({ state, onChange, interfaceData, revision }: C
               </div>
               <div className="flex items-center gap-2">
                 <GeneralIconButton
-                  iconId={CS1_GENERAL_SPRITE_WEIGHT}
-                  spriteRev={spriteRev}
+                  sprite={spritesById.get(CS1_GENERAL_SPRITE_WEIGHT)}
                   ariaLabel="Weight — more info"
                   enabled={generalUsed}
                   tooltip="Total carried weight (kg). Used when the interface checks or shows your weight."
@@ -449,6 +466,7 @@ export function Cs1SimulatePanel({ state, onChange, interfaceData, revision }: C
         state={state}
         onChange={onChange}
         inventoryScriptsUsed={inventoryScriptsUsed}
+        gameVals={gameVals}
       />
 
       <div

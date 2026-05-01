@@ -1,3 +1,6 @@
+import type { IndexedSprite } from "./IndexedSprite";
+
+/** Canvas-backed sprite for interface rendering (palette + index buffer). */
 export class Sprite {
   offsetX = 0;
   offsetY = 0;
@@ -17,53 +20,23 @@ export class Sprite {
 
   private constructor() {}
 
-  static async fetch(
-    spriteId: number,
-    rev: string | number,
-    cacheHeaders: HeadersInit,
-  ): Promise<Sprite> {
+  /** Build from cache {@link IndexedSprite} (see {@link preloadInterfaceSprites}). */
+  static fromIndexedSprite(indexed: IndexedSprite | null | undefined): Sprite {
     const s = new Sprite();
-    try {
-      const revStr = encodeURIComponent(String(rev));
-      const urls = [
-        `/api/cache-proxy/sprites/raw?id=${spriteId}&base=1&rev=${revStr}&source=${revStr}`,
-        `/api/cache-proxy/diff/sprite/${spriteId}/raw?base=1&rev=${revStr}&source=${revStr}`,
-      ];
-
-      for (const url of urls) {
-        const r = await fetch(url, { headers: cacheHeaders, cache: "force-cache" });
-        if (!r.ok) continue;
-        const payload = await r.json() as RawSpritePayload;
-        const entry = payload.sprites?.[0];
-        if (!entry) continue;
-        if (!Number.isFinite(entry.width) || !Number.isFinite(entry.height)) continue;
-        if (!entry.rasterBase64) continue;
-
-        const raster = decodeBase64ToBytes(entry.rasterBase64);
-        if (raster.length < entry.width * entry.height) continue;
-
-        const offsetX = entry.offsetX ?? 0;
-        const offsetY = entry.offsetY ?? 0;
-        const visibleWidth = entry.width;
-        const visibleHeight = entry.height;
-        const rightPad = Math.max(0, entry.subWidth ?? 0);
-        const bottomPad = Math.max(0, entry.subHeight ?? 0);
-
-        s.offsetX = offsetX;
-        s.offsetY = offsetY;
-        s.width = Math.max(visibleWidth, offsetX + visibleWidth + rightPad);
-        s.height = Math.max(visibleHeight, offsetY + visibleHeight + bottomPad);
-        s.subWidth = visibleWidth;
-        s.subHeight = visibleHeight;
-        s.averageColor = entry.averageColor ?? -1;
-        s.raster      = raster;
-        s.palette     = entry.palette ?? [];
-        s.alpha       = entry.alphaBase64 ? decodeBase64ToBytes(entry.alphaBase64) : null;
-        s.loaded      = true;
-        return s;
-      }
-    } catch {
+    if (!indexed || indexed.subWidth <= 0 || indexed.subHeight <= 0 || !indexed.pixels?.length) {
+      return s;
     }
+    s.offsetX = indexed.xOffset;
+    s.offsetY = indexed.yOffset;
+    s.subWidth = indexed.subWidth;
+    s.subHeight = indexed.subHeight;
+    s.width = indexed.width;
+    s.height = indexed.height;
+    s.averageColor = -1;
+    s.raster = indexed.pixels;
+    s.palette = Array.from(indexed.palette);
+    s.alpha = null;
+    s.loaded = true;
     return s;
   }
 
@@ -74,10 +47,10 @@ export class Sprite {
     for (let i = 0; i < count; i++) {
       const color = palette[raster[i]! & 0xff] ?? 0;
       const di = i * 4;
-      out[di]     = (color >> 16) & 0xff;
-      out[di + 1] = (color >>  8) & 0xff;
-      out[di + 2] =  color        & 0xff;
-      out[di + 3] = alpha != null ? (alpha[i]! & 0xff) : (color === 0 ? 0 : 255);
+      out[di] = (color >> 16) & 0xff;
+      out[di + 1] = (color >> 8) & 0xff;
+      out[di + 2] = color & 0xff;
+      out[di + 3] = alpha != null ? (alpha[i]! & 0xff) : color === 0 ? 0 : 255;
     }
     return out;
   }
@@ -86,7 +59,7 @@ export class Sprite {
     if (this._canvas) return this._canvas;
     if (!this.loaded || this.subWidth <= 0 || this.subHeight <= 0) return null;
     const canvas = document.createElement("canvas");
-    canvas.width  = this.subWidth;
+    canvas.width = this.subWidth;
     canvas.height = this.subHeight;
     const ctx = canvas.getContext("2d");
     if (!ctx) return null;
@@ -104,7 +77,7 @@ export class Sprite {
     const dy = Math.trunc(y + this.offsetY);
     const dw = this.subWidth;
     const dh = this.subHeight;
-    
+
     if (!hFlip && !vFlip) {
       ctx.drawImage(canvas, dx, dy, dw, dh);
       return;
@@ -291,54 +264,4 @@ export class Sprite {
     this.drawScaledAt(ctx, x, y, drawW, drawH, hFlip, vFlip);
     ctx.restore();
   }
-}
-
-type RawSpriteEntry = {
-  offsetX: number;
-  offsetY: number;
-  width: number;
-  height: number;
-  averageColor?: number;
-  subHeight?: number;
-  subWidth?: number;
-  alphaBase64?: string | null;
-  rasterBase64: string;
-  palette: number[];
-};
-
-type RawSpritePayload = {
-  id: number;
-  source: number;
-  sprites: RawSpriteEntry[];
-};
-
-function decodeBase64ToBytes(input: string): Uint8Array {
-  const bin = atob(input);
-  const out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-  return out;
-}
-
-type SpriteKey = string;
-
-const SPRITE_CACHE_VERSION = "v4";
-
-const spriteCache = new Map<SpriteKey, Promise<Sprite>>();
-
-export function fetchSpriteCached(
-  spriteId: number,
-  rev: string | number,
-  cacheHeaders: HeadersInit,
-): Promise<Sprite> {
-  const key: SpriteKey = `${SPRITE_CACHE_VERSION}:${spriteId}:${rev}`;
-  let p = spriteCache.get(key);
-  if (!p) {
-    p = Sprite.fetch(spriteId, rev, cacheHeaders);
-    spriteCache.set(key, p);
-  }
-  return p;
-}
-
-export function clearSpriteCache() {
-  spriteCache.clear();
 }

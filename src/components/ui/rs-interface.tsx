@@ -13,8 +13,10 @@ import {
 } from "@/lib/interface-renderer/interface-manager";
 import type { ComponentType, InterfaceEntry } from "@/lib/interface-renderer/component-types";
 import type { Cs1SimState } from "@/lib/interface-renderer/cs1-interpreter";
-import type { VarbitDefinitionLookup } from "@/lib/interface-renderer/varbit-definition";
+import type { VarbitDefinitionLookup } from "@/rs/config/vartype/bit/VarBitTypeLoader";
 import { applyCs2RuntimeFromSim } from "@/lib/interface-renderer/cs2/runtime-context";
+import type { CacheIndex } from "@/rs/cache/CacheIndex";
+import type { Sprite } from "@/rs/sprite/InterfaceCanvasSprite";
 
 const FIXED_CANVAS_WIDTH = 765;
 const FIXED_CANVAS_HEIGHT = 503;
@@ -32,6 +34,10 @@ export type RsInterfaceProps = {
   interfaceData?: InterfaceEntry | null;
   revision?: string | number;
   cacheHeaders?: HeadersInit;
+  /** Pre-decoded sprites from the DAT2 sprite index (`preloadInterfaceSprites`). */
+  spritesById?: ReadonlyMap<number, Sprite>;
+  /** DAT2 index 12: client scripts (`getFile(scriptId, 0)`). */
+  clientScriptIndex?: CacheIndex | null;
   className?: string;
   viewportColor?: string;
   showOverlays?: boolean;
@@ -42,6 +48,8 @@ export type RsInterfaceProps = {
   interactiveMode?: boolean;
   cs1SimState?: Cs1SimState | null;
   cs1VarbitDefinitionLookup?: VarbitDefinitionLookup | null;
+  /** Bump after manual CS2 runs so the canvas redraws with mutated widgets. */
+  cs2RedrawNonce?: number;
 };
 
 function useContainerSize(ref: React.RefObject<HTMLDivElement | null>): {
@@ -160,6 +168,8 @@ function useInterfaceRenderer(
   interfaceData: InterfaceEntry | null | undefined,
   revision: string | number,
   cacheHeaders: HeadersInit,
+  spritesById: ReadonlyMap<number, Sprite>,
+  clientScriptIndex: CacheIndex | null,
   viewportOffsetX: number,
   viewportOffsetY: number,
   viewportWidth: number,
@@ -186,12 +196,8 @@ function useInterfaceRenderer(
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const manager = new InterfaceManager(ctx, cacheHeaders, revision);
+    const manager = new InterfaceManager(ctx, spritesById);
     managerOutRef.current = manager;
-
-    manager.onSpriteLoaded = () => {
-      render(ctx, manager);
-    };
 
     function render(ctx: CanvasRenderingContext2D, mgr: InterfaceManager) {
       setCs1SimState(cs1SimStateRef.current ?? null);
@@ -210,6 +216,7 @@ function useInterfaceRenderer(
         data,
         canvas.width,
         canvas.height,
+        clientScriptIndex,
       );
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.imageSmoothingEnabled = false;
@@ -261,7 +268,6 @@ function useInterfaceRenderer(
       if (rafId != null) {
         window.cancelAnimationFrame(rafId);
       }
-      manager.onSpriteLoaded = null;
       managerOutRef.current = null;
       renderRedrawRef.current = null;
       setCs1SimState(null);
@@ -274,6 +280,8 @@ function useInterfaceRenderer(
     interfaceData,
     revision,
     cacheHeaders,
+    spritesById,
+    clientScriptIndex,
     viewportOffsetX,
     viewportOffsetY,
     viewportWidth,
@@ -298,6 +306,8 @@ export function RsInterface({
   interfaceData,
   revision = "latest",
   cacheHeaders = {},
+  spritesById = new Map<number, Sprite>(),
+  clientScriptIndex = null,
   className,
   viewportColor = "rgb(76,68,32)",
   showOverlays = true,
@@ -308,6 +318,7 @@ export function RsInterface({
   interactiveMode = false,
   cs1SimState = null,
   cs1VarbitDefinitionLookup = null,
+  cs2RedrawNonce = 0,
 }: RsInterfaceProps) {
   const containerRef = React.useRef<HTMLDivElement>(null);
   const canvasRef = React.useRef<HTMLCanvasElement>(null);
@@ -345,6 +356,8 @@ export function RsInterface({
     interfaceData,
     revision,
     cacheHeaders,
+    spritesById,
+    clientScriptIndex,
     viewportOffsetX,
     viewportOffsetY,
     viewportWidth,
@@ -359,7 +372,7 @@ export function RsInterface({
 
   React.useEffect(() => {
     bumpRedraw();
-  }, [cs1SimState, cs1VarbitDefinitionLookup, bumpRedraw]);
+  }, [cs1SimState, cs1VarbitDefinitionLookup, cs2RedrawNonce, bumpRedraw]);
 
   React.useEffect(() => {
     if (interactiveMode) return;

@@ -227,7 +227,7 @@ function alignWidget(var0: ComponentType, parentTempWidth: number, parentTempHei
 }
 
 function componentRuntimeId(comp: ComponentType): number {
-    return comp.packedId;
+    return comp.internalId;
 }
 
 function resizeInterfaceScroll(var0: ComponentType): void {

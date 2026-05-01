@@ -1,4 +1,4 @@
-import type { VarbitDefinitionLookup } from "../varbit-definition";
+import type { VarbitDefinitionLookup } from "@/rs/config/vartype/bit/VarBitTypeLoader";
 import { Varps, Varps_masks } from "../varps";
 import { parseInterfaceParentsLookup, type ComponentType, type InterfaceEntry } from "../component-types";
 import { Interpreter } from "./Interpreter";
@@ -8,6 +8,7 @@ import { ScriptFrame } from "./script-frame";
 import { ScriptOpcodes } from "./ScriptOpcodes";
 import { Varcs } from "./varcs";
 import { getCs2RuntimeContext } from "./runtime-context";
+import { emitCs2RuntimeLog } from "./cs2-console-sink";
 
 export let rootScriptEvent: ScriptEvent | null = null;
 export let currentScript: Script | null = null;
@@ -72,7 +73,9 @@ export function method5910(
 }
 
 export function logUnhandledScriptOpcode(var0: number, var1: Script): number {
-  console.info(`[method3270] unhandled script opcode=${var0} scriptId=${var1.cacheKey} name=${var1.field974}`);
+  const msg = `[method3270] unhandled opcode=${var0} scriptId=${var1.cacheKey} name=${var1.field974}`;
+  emitCs2RuntimeLog("warn", msg);
+  console.info(msg);
   return 2;
 }
 
@@ -1790,8 +1793,7 @@ export async function runScript(event: ScriptEvent, var1: number, var2: number):
       console.warn("[runScript] isWorldMapEvent — not implemented in browser");
     } else {
       const var5 = var3[0] as number;
-      const { scriptRev, cacheHeaders } = getCs2RuntimeContext();
-      var4 = await Script.getScript(var5, scriptRev, cacheHeaders);
+      var4 = await Script.getScript(var5);
     }
 
     if (rootScriptEvent != null) {
@@ -1926,11 +1928,12 @@ async function runScriptLogic(var0: ScriptEvent, var1: Script, var2: number, var
                 case 1:
                 default:
                   break;
-                case 2:
-                  console.error(
-                    `[method3270] unhandled opcode=${var32} scriptId=${activeScript.cacheKey} name=${activeScript.field974}`,
-                  );
+                case 2: {
+                  const msg = `[method3270] unhandled opcode=${var32} scriptId=${activeScript.cacheKey} name=${activeScript.field974}`;
+                  emitCs2RuntimeLog("error", msg);
+                  console.error(msg);
                   throw new IllegalStateScriptError();
+                }
               }
             } else if (var32 === ScriptOpcodes.ICONST) {
               Interpreter.Interpreter_intStack[++Interpreter.Interpreter_intStackSize - 1] = activeScript.intOperands[var5]!;
@@ -2123,8 +2126,7 @@ async function runScriptLogic(var0: ScriptEvent, var1: Script, var2: number, var
                 }
               } else {
                 var13 = activeScript.intOperands[var5]!;
-                const { scriptRev, cacheHeaders } = getCs2RuntimeContext();
-                const var35 = await Script.getScript(var13, scriptRev, cacheHeaders);
+                const var35 = await Script.getScript(var13);
                 if (!var35) throw new IllegalStateScriptError();
                 const var15 = new Array(var35.localIntCount).fill(0);
                 const var16 = new Array<unknown>(var35.localStringCount).fill(null);

@@ -1,4 +1,4 @@
-import type { Sprite } from "./sprite";
+import type { Sprite } from "@/rs/sprite/InterfaceCanvasSprite";
 
 export class Rasterizer2D {
   ctx: CanvasRenderingContext2D;

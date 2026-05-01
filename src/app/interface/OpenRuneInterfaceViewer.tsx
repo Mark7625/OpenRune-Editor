@@ -1,32 +1,61 @@
 "use client";
 
 import * as React from "react";
-import { Monitor, Maximize2, Search, SlidersHorizontal, Copy, Check } from "lucide-react";
+import {
+  Monitor,
+  Maximize2,
+  Search,
+  SlidersHorizontal,
+  Copy,
+  Check,
+  Eye,
+  Sparkles,
+  Braces,
+} from "lucide-react";
 
 import { useCacheType } from "@/context/cache-type-context";
-import { VARBITTYPES, useGamevals } from "@/context/gameval-context";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { cacheProxyHeaders } from "@/lib/cache-proxy-client";
 import { cn } from "@/lib/utils";
+import type { CacheIndex } from "@/rs/cache/CacheIndex";
 import { RsInterface, type RsInterfaceMode } from "@/components/ui/rs-interface";
 import { adaptInterfaceEntryFromApi, type ComponentType, type InterfaceEntry } from "@/lib/interface-renderer/component-types";
 import { openInterface, setCs1InterfaceEntry } from "@/lib/interface-renderer/interface-manager";
 import { applyCs2RuntimeFromSim } from "@/lib/interface-renderer/cs2/runtime-context";
 import { Cs1Interpreter } from "@/lib/interface-renderer/cs1-interpreter";
+import type {
+  VarbitDefinition,
+  VarbitDefinitionLookup,
+} from "@/rs/config/vartype/bit/VarBitTypeLoader";
+import type { GameVals } from "@/rs/config/gameval/GameVals";
+import type { Sprite } from "@/rs/sprite/InterfaceCanvasSprite";
+import type { LoadedCache } from "@/mapviewer/Caches";
+import { InterfaceViewer } from "./InterfaceViewer";
+import { collectOnLoadScriptDiagnostics } from "@/lib/interface-renderer/cs2/on-load-script-diagnostics";
+import { getCs2RuntimeContext } from "@/lib/interface-renderer/cs2/runtime-context";
 import {
-  buildVarbitDefinitionMapFromGamevalExtras,
-  mapToVarbitLookup,
-} from "@/lib/interface-renderer/varbit-definition";
+  makeCs2LogLine,
+  setCs2ConsoleSink,
+  type Cs2LogLevel,
+  type Cs2LogLine,
+} from "@/lib/interface-renderer/cs2/cs2-console-sink";
 import { Cs1SimulatePanel } from "./cs1-simulate-panel";
+import { Cs2ManualRunnerPanel } from "./cs2-manual-runner-panel";
 
 type InterfaceManifestRow = {
   interfaceId: number;
   gameval: string | null;
   iflegacy: boolean | null;
 };
+
+function cs2DiagLineLevel(body: string): Cs2LogLevel {
+  const u = body.toLowerCase();
+  if (u.includes("missing") || u.includes("invalid") || u.includes("error")) return "warn";
+  return "load";
+}
 
 type InterfaceManifestResponse = {
   rev: number;
@@ -239,6 +268,15 @@ function getRootWidgetV3(entry: InterfaceEntry, interfaceId: number): boolean | 
 }
 
 /** Pre-order flatten without deep recursion or `push(...hugeArray)` (both can exceed the call stack). */
+function unhideComponentSubtree(comp: ComponentType): void {
+  comp.hide = false;
+  const ch = comp.children;
+  if (!ch) return;
+  for (const c of ch) {
+    if (c) unhideComponentSubtree(c);
+  }
+}
+
 function flattenTree(nodes: TreeNode[], depth = 0): Array<TreeNode & { depth: number }> {
   const out: Array<TreeNode & { depth: number }> = [];
   const stack: Array<{ node: TreeNode; depth: number }> = [];
@@ -262,6 +300,88 @@ type JsonDialogProps = {
   componentData: ComponentType | null;
   componentId: number | null;
 };
+
+type InterfaceViewerJsonExportDialogProps = {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  busy: boolean;
+  error: string | null;
+  jsonText: string;
+  /** Interface id shown in the title when export ran for a selection. */
+  exportInterfaceId: number | null;
+};
+
+function legacyForInterfaceGroup(
+  legacy: Record<number, boolean>,
+  groupId: number,
+): Record<number, boolean> {
+  const out: Record<number, boolean> = {};
+  for (const key of Object.keys(legacy)) {
+    const combined = Number(key);
+    if ((combined >>> 16) === groupId) {
+      out[combined] = legacy[combined]!;
+    }
+  }
+  return out;
+}
+
+function InterfaceViewerJsonExportDialog({
+  open,
+  onOpenChange,
+  busy,
+  error,
+  jsonText,
+  exportInterfaceId,
+}: InterfaceViewerJsonExportDialogProps) {
+  const [copied, setCopied] = React.useState(false);
+
+  const handleCopy = React.useCallback(() => {
+    if (!jsonText) return;
+    void navigator.clipboard.writeText(jsonText).then(() => {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    });
+  }, [jsonText]);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="flex max-h-[85vh] max-w-4xl flex-col">
+        <DialogHeader className="flex shrink-0 flex-row items-center justify-between space-y-0">
+          <DialogTitle className="text-base">
+            InterfaceViewer JSON (temp)
+            {exportInterfaceId != null ? (
+              <span className="font-mono text-muted-foreground"> · #{exportInterfaceId}</span>
+            ) : null}
+          </DialogTitle>
+          <Button size="sm" variant="outline" className="gap-2" disabled={!jsonText || busy} onClick={handleCopy}>
+            {copied ? (
+              <>
+                <Check className="size-3.5" />
+                Copied
+              </>
+            ) : (
+              <>
+                <Copy className="size-3.5" />
+                Copy JSON
+              </>
+            )}
+          </Button>
+        </DialogHeader>
+        <div className="min-h-0 flex-1 overflow-auto rounded border bg-muted/50 p-3 font-mono text-xs whitespace-pre-wrap break-words">
+          {busy ? (
+            <span className="text-muted-foreground">Running ComponentDecoder (local cache)…</span>
+          ) : error ? (
+            <span className="text-destructive">{error}</span>
+          ) : jsonText ? (
+            jsonText
+          ) : (
+            <span className="text-muted-foreground">No data.</span>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 function JsonDialog({ open, onOpenChange, componentData, componentId }: JsonDialogProps) {
   const [copied, setCopied] = React.useState(false);
@@ -308,18 +428,36 @@ function JsonDialog({ open, onOpenChange, componentData, componentId }: JsonDial
   );
 }
 
-export function OpenRuneInterfaceViewer() {
+export type OpenRuneInterfaceViewerProps = {
+  /** Pre-decoded sprites from the session cache (DAT2 sprite index). */
+  spritesById?: ReadonlyMap<number, Sprite>;
+  /** DAT2 index 12 — client scripts (`getFile(scriptId, 0)`). */
+  clientScriptIndex?: CacheIndex | null;
+  /** Pre-decoded varbit definitions from the local cache (no per-id `load`). */
+  varbitDefinitions?: ReadonlyMap<number, VarbitDefinition> | null;
+  /** Local cache gamevals (index 24); inventory name search when non-null. */
+  gameVals?: GameVals | null;
+  /** Local profile cache; when set, enables temp export of `InterfaceViewer` decode (`interfaces` + `legacy`). */
+  loadedCache?: LoadedCache | null;
+};
+
+export function OpenRuneInterfaceViewer({
+  spritesById = new Map<number, Sprite>(),
+  clientScriptIndex = null,
+  varbitDefinitions = null,
+  gameVals = null,
+  loadedCache = null,
+}: OpenRuneInterfaceViewerProps = {}) {
+  const varbitDefinitionLookup = React.useMemo<VarbitDefinitionLookup | null>(() => {
+    if (varbitDefinitions == null) return null;
+    return (id: number) => varbitDefinitions.get(id) ?? null;
+  }, [varbitDefinitions]);
   const { selectedCacheType, cacheStatuses } = useCacheType();
-  const { loadGamevalType, hasLoaded, getGamevalExtras } = useGamevals();
 
   const revision = React.useMemo(() => {
     const status = cacheStatuses.get(selectedCacheType.id);
     return status?.statusResponse?.revision ?? "latest";
   }, [cacheStatuses, selectedCacheType.id]);
-
-  React.useEffect(() => {
-    void loadGamevalType(VARBITTYPES, revision);
-  }, [loadGamevalType, revision]);
   const [manifestRows, setManifestRows] = React.useState<InterfaceManifestRow[]>([]);
   const [manifestLoading, setManifestLoading] = React.useState(false);
   const [manifestError, setManifestError] = React.useState<string | null>(null);
@@ -334,6 +472,8 @@ export function OpenRuneInterfaceViewer() {
   const [showPixelGrid, setShowPixelGrid] = React.useState(false);
   const [interactiveMode, setInteractiveMode] = React.useState(false);
   const [componentPanelView, setComponentPanelView] = React.useState<"tree" | "simulate">("tree");
+  /** When false (default), runtime/CS2-created widgets are omitted from the sidebar tree. */
+  const [showGeneratedTreeRows, setShowGeneratedTreeRows] = React.useState(false);
   const [isInterfaceLoaded, setIsInterfaceLoaded] = React.useState(false);
   const [interfaceLoadError, setInterfaceLoadError] = React.useState<string | null>(null);
   const [interfaceData, setInterfaceData] = React.useState<InterfaceEntry | null>(null);
@@ -341,14 +481,67 @@ export function OpenRuneInterfaceViewer() {
   const [jsonDialogOpen, setJsonDialogOpen] = React.useState(false);
   const [jsonDialogComponentNodeKey, setJsonDialogComponentNodeKey] = React.useState<string | null>(null);
   const [cs1SimState, setCs1SimState] = React.useState(() => Cs1Interpreter.defaultState());
+  const [cs2LogLines, setCs2LogLines] = React.useState<Cs2LogLine[]>([]);
 
-  const cs1VarbitDefinitionLookup = React.useMemo(() => {
-    if (!hasLoaded(VARBITTYPES, revision)) return null;
-    const extras = getGamevalExtras(VARBITTYPES, revision);
-    if (!extras) return null;
-    const map = buildVarbitDefinitionMapFromGamevalExtras(extras);
-    return mapToVarbitLookup(map);
-  }, [getGamevalExtras, hasLoaded, revision, selectedCacheType.id]);
+  const appendCs2LogLine = React.useCallback((line: Cs2LogLine) => {
+    setCs2LogLines((prev) => [...prev.slice(-499), line]);
+  }, []);
+
+  const clearCs2Log = React.useCallback(() => {
+    setCs2LogLines([]);
+  }, []);
+
+  React.useLayoutEffect(() => {
+    setCs2ConsoleSink(appendCs2LogLine);
+    return () => setCs2ConsoleSink(null);
+  }, [appendCs2LogLine]);
+
+  const [cs2RedrawNonce, setCs2RedrawNonce] = React.useState(0);
+
+  const [ivExportOpen, setIvExportOpen] = React.useState(false);
+  const [ivExportBusy, setIvExportBusy] = React.useState(false);
+  const [ivExportError, setIvExportError] = React.useState<string | null>(null);
+  const [ivExportJson, setIvExportJson] = React.useState("");
+  const [ivExportInterfaceId, setIvExportInterfaceId] = React.useState<number | null>(null);
+
+  const runInterfaceViewerExport = React.useCallback(() => {
+    if (!loadedCache) return;
+    if (selectedId == null) {
+      setIvExportInterfaceId(null);
+      setIvExportOpen(true);
+      setIvExportJson("");
+      setIvExportError("Select an interface in the list first.");
+      setIvExportBusy(false);
+      return;
+    }
+    const ifaceId = selectedId;
+    setIvExportInterfaceId(ifaceId);
+    setIvExportOpen(true);
+    setIvExportJson("");
+    setIvExportError(null);
+    setIvExportBusy(true);
+    window.setTimeout(() => {
+      try {
+        const viewer = new InterfaceViewer(loadedCache);
+        const iface = viewer.interfaces[ifaceId];
+        if (!iface) {
+          setIvExportError(`No decoded interface for id ${ifaceId} in local index 3 (InterfaceViewer).`);
+          return;
+        }
+        const payload = {
+          loadedCache: { type: loadedCache.type, name: loadedCache.info.name },
+          interfaceId: ifaceId,
+          interface: iface,
+          legacy: legacyForInterfaceGroup(viewer.legacy, ifaceId),
+        };
+        setIvExportJson(JSON.stringify(payload, null, 2));
+      } catch (e) {
+        setIvExportError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setIvExportBusy(false);
+      }
+    }, 0);
+  }, [loadedCache, selectedId]);
 
   React.useEffect(() => {
     const controller = new AbortController();
@@ -405,6 +598,7 @@ export function OpenRuneInterfaceViewer() {
       setInterfaceLoadError(null);
       setInterfaceData(null);
       setSelectedComponentNodeKey(null);
+      setCs2LogLines([]);
       return;
     }
 
@@ -414,6 +608,7 @@ export function OpenRuneInterfaceViewer() {
     setIsInterfaceLoaded(false);
     setInterfaceLoadError(null);
     setInterfaceData(null);
+    setCs2LogLines([]);
 
     const rev = encodeURIComponent(String(revision));
     const url = `/api/cache-proxy/interface/${selectedId}?rev=${rev}`;
@@ -438,12 +633,22 @@ export function OpenRuneInterfaceViewer() {
             cs1SimState,
             revision,
             cacheProxyHeaders(selectedCacheType),
-            cs1VarbitDefinitionLookup,
+            varbitDefinitionLookup,
             data,
+            undefined,
+            undefined,
+            clientScriptIndex,
           );
           await openInterface(1, selectedId, 1);
           // Trigger React update after on-load scripts mutate widget tree in place.
           setInterfaceData({ ...data, components: { ...data.components } });
+          const entryAfter = getCs2RuntimeContext().interfaceEntry ?? data;
+          const diag = await collectOnLoadScriptDiagnostics(entryAfter, selectedId);
+          if (!cancelled) {
+            const diagLines = diag.map((d) => makeCs2LogLine(cs2DiagLineLevel(d), d));
+            // Append diagnostics; do not replace — CS2 may have emitted lines (e.g. unhandled opcodes) during openInterface.
+            setCs2LogLines((prev) => [...prev, ...diagLines].slice(-500));
+          }
         }
         setSelectedComponentNodeKey(null);
         setIsInterfaceLoaded(true);
@@ -460,7 +665,7 @@ export function OpenRuneInterfaceViewer() {
       cancelled = true;
       controller.abort();
     };
-  }, [revision, selectedCacheType, selectedId, cs1SimState, cs1VarbitDefinitionLookup]);
+  }, [revision, selectedCacheType, selectedId, cs1SimState, varbitDefinitionLookup, clientScriptIndex]);
 
   const filtered = React.useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -496,6 +701,18 @@ export function OpenRuneInterfaceViewer() {
     return map;
   }, [componentTreeRows]);
 
+  const componentTreeRowsForList = React.useMemo(() => {
+    if (showGeneratedTreeRows) return componentTreeRows;
+    return componentTreeRows.filter((row) => !row.dynamicCreated);
+  }, [componentTreeRows, showGeneratedTreeRows]);
+
+  React.useEffect(() => {
+    if (showGeneratedTreeRows) return;
+    if (!selectedComponentNodeKey) return;
+    const n = treeNodeByKey.get(selectedComponentNodeKey);
+    if (n?.dynamicCreated) setSelectedComponentNodeKey(null);
+  }, [showGeneratedTreeRows, selectedComponentNodeKey, treeNodeByKey]);
+
   const selectedTreeNode = React.useMemo(
     () => (selectedComponentNodeKey ? treeNodeByKey.get(selectedComponentNodeKey) ?? null : null),
     [selectedComponentNodeKey, treeNodeByKey],
@@ -511,6 +728,16 @@ export function OpenRuneInterfaceViewer() {
     },
     []
   );
+
+  const unhideAllComponents = React.useCallback(() => {
+    setInterfaceData((prev) => {
+      if (!prev) return prev;
+      for (const comp of Object.values(prev.components)) {
+        unhideComponentSubtree(comp);
+      }
+      return { ...prev, components: { ...prev.components } };
+    });
+  }, []);
 
   const jsonDialogComponentData = React.useMemo(
     () => (jsonDialogComponentNodeKey ? (treeNodeByKey.get(jsonDialogComponentNodeKey)?.component ?? null) : null),
@@ -557,19 +784,37 @@ export function OpenRuneInterfaceViewer() {
       {/* ------------------------------------------------------------------ */}
       <aside className="flex w-64 shrink-0 flex-col border-r bg-background">
         {/* Header */}
-        <div className="flex items-center justify-between border-b px-3 py-2">
+        <div className="flex items-center justify-between gap-2 border-b px-3 py-2">
           <span className="text-sm font-semibold text-foreground">Interfaces</span>
-          <InterfaceViewerSettings
-            mode={mode}
-            setMode={setMode}
-            showOverlays={showOverlays}
-            setShowOverlays={setShowOverlays}
-            showViewportBorder={showViewportBorder}
-            setShowViewportBorder={setShowViewportBorder}
-            showPixelGrid={showPixelGrid}
-            setShowPixelGrid={setShowPixelGrid}
-            onViewportColorChange={setViewportColor}
-          />
+          <div className="flex shrink-0 items-center gap-1">
+            {loadedCache ? (
+              <Button
+                type="button"
+                size="icon-xs"
+                variant="outline"
+                disabled={selectedId == null}
+                title={
+                  selectedId == null
+                    ? "Select an interface first"
+                    : "TEMP: JSON for selected interface from local InterfaceViewer (decode)"
+                }
+                onClick={runInterfaceViewerExport}
+              >
+                <Braces className="size-3.5" />
+              </Button>
+            ) : null}
+            <InterfaceViewerSettings
+              mode={mode}
+              setMode={setMode}
+              showOverlays={showOverlays}
+              setShowOverlays={setShowOverlays}
+              showViewportBorder={showViewportBorder}
+              setShowViewportBorder={setShowViewportBorder}
+              showPixelGrid={showPixelGrid}
+              setShowPixelGrid={setShowPixelGrid}
+              onViewportColorChange={setViewportColor}
+            />
+          </div>
         </div>
 
         <div className="border-b px-2 py-2">
@@ -658,6 +903,8 @@ export function OpenRuneInterfaceViewer() {
               interfaceData={interfaceData}
               revision={revision}
               cacheHeaders={cacheProxyHeaders(selectedCacheType)}
+              spritesById={spritesById}
+              clientScriptIndex={clientScriptIndex}
               viewportColor={viewportColor}
               showOverlays={showOverlays}
               showViewportBorder={showViewportBorder}
@@ -666,7 +913,8 @@ export function OpenRuneInterfaceViewer() {
               selectedComponent={selectedComponent}
               interactiveMode={interactiveMode}
               cs1SimState={cs1ForCanvas}
-              cs1VarbitDefinitionLookup={cs1VarbitDefinitionLookup}
+              cs1VarbitDefinitionLookup={varbitDefinitionLookup}
+              cs2RedrawNonce={cs2RedrawNonce}
               className={mode === "resizable" ? "h-full w-full" : "shrink-0"}
             />
           ) : (
@@ -679,7 +927,35 @@ export function OpenRuneInterfaceViewer() {
 
       <aside className="flex w-80 shrink-0 flex-col border-l bg-background">
         <div className="border-b px-3 py-2">
-          <div className="mb-2 text-sm font-semibold text-foreground">Components</div>
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <span className="text-sm font-semibold text-foreground">Components</span>
+            <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
+              <Button
+                type="button"
+                size="sm"
+                variant={showGeneratedTreeRows ? "default" : "outline"}
+                className="h-7 gap-1 px-2 text-[11px]"
+                title="Show widgets created at runtime (CS2) in this list — marked with * when visible"
+                disabled={!isInterfaceLoaded || !interfaceData}
+                onClick={() => setShowGeneratedTreeRows((v) => !v)}
+              >
+                <Sparkles className="size-3.5" />
+                Generated
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-7 gap-1 px-2 text-[11px]"
+                title="Set hide=false on every widget (preview / editor)"
+                disabled={!isInterfaceLoaded || !interfaceData}
+                onClick={unhideAllComponents}
+              >
+                <Eye className="size-3.5" />
+                Unhide all
+              </Button>
+            </div>
+          </div>
           <div className="flex items-center gap-1">
             <Button
               type="button"
@@ -709,8 +985,12 @@ export function OpenRuneInterfaceViewer() {
               <div className="px-3 py-4 text-xs text-muted-foreground">Loading component tree…</div>
             ) : componentTreeRows.length === 0 ? (
               <div className="px-3 py-4 text-xs text-muted-foreground">No component nodes found.</div>
+            ) : componentTreeRowsForList.length === 0 ? (
+              <div className="px-3 py-4 text-xs text-muted-foreground">
+                No components match the current filter. Turn on &quot;Generated&quot; to include runtime-created widgets.
+              </div>
             ) : (
-              componentTreeRows.map((row) => (
+              componentTreeRowsForList.map((row) => (
                 <button
                   key={row.nodeKey}
                   type="button"
@@ -732,20 +1012,38 @@ export function OpenRuneInterfaceViewer() {
           ) : !isInterfaceLoaded ? (
             <div className="px-3 py-4 text-xs text-muted-foreground">Loading…</div>
           ) : rootWidgetV3 === true ? (
-            <div className="px-3 py-4 text-xs text-muted-foreground">
-              Client script simulation for IF3 interfaces is coming soon.
-            </div>
+            <Cs2ManualRunnerPanel
+              interfaceData={interfaceData}
+              interfaceRootId={selectedId}
+              onAfterRun={() => setCs2RedrawNonce((n) => n + 1)}
+              logLines={cs2LogLines}
+              appendLogLine={appendCs2LogLine}
+              onClearLog={clearCs2Log}
+            />
           ) : rootWidgetV3 === false ? (
             <Cs1SimulatePanel
               state={cs1SimState}
               onChange={setCs1SimState}
               interfaceData={interfaceData}
               revision={revision}
+              gameVals={gameVals}
+              spritesById={spritesById}
             />
           ) : (
-            <div className="px-3 py-4 text-xs text-muted-foreground">
-              Could not determine legacy vs IF3 for this interface.
-            </div>
+            <>
+              <div className="px-3 py-2 text-xs text-muted-foreground">
+                Could not determine legacy vs IF3 for this interface. CS1 simulator is hidden; you can still run CS2
+                manually below.
+              </div>
+              <Cs2ManualRunnerPanel
+                interfaceData={interfaceData}
+                interfaceRootId={selectedId}
+                onAfterRun={() => setCs2RedrawNonce((n) => n + 1)}
+                logLines={cs2LogLines}
+                appendLogLine={appendCs2LogLine}
+                onClearLog={clearCs2Log}
+              />
+            </>
           )}
         </div>
       </aside>
@@ -755,6 +1053,22 @@ export function OpenRuneInterfaceViewer() {
         onOpenChange={setJsonDialogOpen}
         componentData={jsonDialogComponentData}
         componentId={jsonDialogComponentData?.id ?? null}
+      />
+      <InterfaceViewerJsonExportDialog
+        open={ivExportOpen}
+        onOpenChange={(open) => {
+          setIvExportOpen(open);
+          if (!open) {
+            setIvExportJson("");
+            setIvExportError(null);
+            setIvExportBusy(false);
+            setIvExportInterfaceId(null);
+          }
+        }}
+        busy={ivExportBusy}
+        error={ivExportError}
+        jsonText={ivExportJson}
+        exportInterfaceId={ivExportInterfaceId}
       />
     </div>
   );

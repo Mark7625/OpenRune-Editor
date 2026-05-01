@@ -2,7 +2,8 @@ import type { InterfaceEntry } from "../component-types";
 import { ScriptEvent } from "./script-event";
 import { runScript } from "./run-script";
 
-function normalizeOnLoadArgs(raw: unknown): unknown[] | null {
+/** Parse `onLoad` payload: `[scriptId, ...args]` (same shape as {@link runWidgetOnLoadListener}). */
+export function normalizeOnLoadArgs(raw: unknown): unknown[] | null {
   if (!Array.isArray(raw) || raw.length === 0) return null;
   const first = raw[0];
   const scriptId = typeof first === "number" ? first : Number(first);

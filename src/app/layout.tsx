@@ -36,6 +36,29 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="dark" suppressHydrationWarning>
+      <head>
+        <link
+          rel="preload"
+          href="/fonts/runescape/RuneScape-Plain-11.ttf"
+          as="font"
+          type="font/ttf"
+          crossOrigin="anonymous"
+        />
+        <link
+          rel="preload"
+          href="/fonts/runescape/RuneScape-Plain-12.ttf"
+          as="font"
+          type="font/ttf"
+          crossOrigin="anonymous"
+        />
+        <link
+          rel="preload"
+          href="/fonts/runescape/RuneScape-Bold-12.ttf"
+          as="font"
+          type="font/ttf"
+          crossOrigin="anonymous"
+        />
+      </head>
       <body
         className={`${inter.variable} ${cinzel.variable} theme-default full-width-content font-sans antialiased`}
       >

@@ -7,7 +7,8 @@ import {
   GamevalSearchSuggestionList,
   useGamevalSearchSuggestions,
   type GamevalSearchAutocompleteConfig,
-} from "@/components/diff/gameval-search-suggestion-list";
+  type GamevalEntry,
+} from "@/components/gameval-search-autocomplete";
 import { isGamevalSuggestPanelOpen } from "@/components/diff/diff-id-search";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -18,9 +19,10 @@ import {
 } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ITEMTYPES, useGamevals } from "@/context/gameval-context";
 import type { ComponentType, InterfaceEntry } from "@/lib/interface-renderer/component-types";
 import { Cs1Interpreter, type Cs1SimInventory, type Cs1SimState } from "@/lib/interface-renderer/cs1-interpreter";
+import { GameValGroupType } from "@/rs/config/gameval/GameValGroupType";
+import type { GameVals } from "@/rs/config/gameval/GameVals";
 import { cn } from "@/lib/utils";
 
 type InventorySimulateSectionProps = {
@@ -29,6 +31,7 @@ type InventorySimulateSectionProps = {
   state: Cs1SimState;
   onChange: React.Dispatch<React.SetStateAction<Cs1SimState>>;
   inventoryScriptsUsed: boolean;
+  gameVals: GameVals | null;
 };
 
 function getComponent(entry: InterfaceEntry | null, id: number): ComponentType | null {
@@ -66,6 +69,7 @@ export function InventorySimulateSection({
   state,
   onChange,
   inventoryScriptsUsed,
+  gameVals,
 }: InventorySimulateSectionProps) {
   const invLocked = !inventoryScriptsUsed;
   const [invOpen, setInvOpen] = React.useState(false);
@@ -73,19 +77,20 @@ export function InventorySimulateSection({
   React.useEffect(() => {
     if (!inventoryScriptsUsed) setInvOpen(false);
   }, [inventoryScriptsUsed]);
-  const { loadGamevalType, hasLoaded } = useGamevals();
 
-  React.useEffect(() => {
-    void loadGamevalType(ITEMTYPES, revision);
-  }, [loadGamevalType, revision]);
+  const itemEntries = React.useMemo((): GamevalEntry[] | null => {
+    if (!gameVals) return null;
+    return gameVals.get(GameValGroupType.OBJTYPES).map((e) => ({
+      id: e.id,
+      name: e.name,
+      lowerName: e.name.toLowerCase(),
+    }));
+  }, [gameVals]);
 
-  const itemGamevalConfig = React.useMemo((): GamevalSearchAutocompleteConfig => {
-    return {
-      type: ITEMTYPES,
-      rev: revision,
-      enabled: hasLoaded(ITEMTYPES, revision),
-    };
-  }, [revision, hasLoaded]);
+  const itemGamevalConfig = React.useMemo((): GamevalSearchAutocompleteConfig | undefined => {
+    if (!itemEntries) return undefined;
+    return { type: GameValGroupType.OBJTYPES, rev: revision, enabled: true };
+  }, [itemEntries, revision]);
 
   const components = React.useMemo(() => {
     if (!interfaceData?.components) return [];
@@ -130,14 +135,21 @@ export function InventorySimulateSection({
     rowSuggestRow != null ? (rows[rowSuggestRow]?.itemIdText ?? "") : fillAllItemText;
   const itemSuggestHookActive =
     !invLocked &&
-    itemGamevalConfig.enabled &&
+    Boolean(itemGamevalConfig?.enabled) &&
     (fillSuggestOpen || (rowSuggestRow !== null && rowSuggestOpen));
 
-  const { suggestions: itemSuggestions, loaded: itemLoaded, loading: itemLoading } =
-    useGamevalSearchSuggestions(itemGamevalConfig, itemQueryForHook, itemSuggestHookActive);
+  const { suggestions: itemSuggestions } = useGamevalSearchSuggestions(
+    itemGamevalConfig,
+    itemQueryForHook,
+    itemSuggestHookActive,
+    itemEntries ?? undefined,
+  );
+
+  const itemLoaded = Boolean(itemEntries);
+  const itemLoading = false;
 
   const showItemPanelFill = isGamevalSuggestPanelOpen({
-    enabled: itemGamevalConfig.enabled,
+    enabled: Boolean(itemGamevalConfig?.enabled),
     open: !invLocked && fillSuggestOpen && rowSuggestRow === null,
     value: fillAllItemText,
     loading: itemLoading,
@@ -149,7 +161,7 @@ export function InventorySimulateSection({
     !invLocked &&
     rowSuggestRow !== null &&
     isGamevalSuggestPanelOpen({
-      enabled: itemGamevalConfig.enabled,
+      enabled: Boolean(itemGamevalConfig?.enabled),
       open: rowSuggestOpen,
       value: rows[rowSuggestRow]?.itemIdText ?? "",
       loading: itemLoading,

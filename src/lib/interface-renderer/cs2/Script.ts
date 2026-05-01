@@ -1,5 +1,37 @@
+import type { CacheIndex } from "@/rs/cache/CacheIndex";
+import { IndexType } from "@/rs/cache/IndexType";
 import { Cs2Buffer } from "./buffer";
+import { getCs2RuntimeContext } from "./runtime-context";
 import { ScriptOpcodes } from "./ScriptOpcodes";
+
+function int8ArrayToUint8Array(data: Int8Array): Uint8Array {
+  return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+}
+
+/** Read raw client script bytes from DAT2 index 12 (same layout as sprites: archive = id, file 0). */
+function readClientScriptFromIndex(index: CacheIndex, scriptId: number): Uint8Array | null {
+  const tryPair = (archiveId: number, fileId: number): Uint8Array | null => {
+    try {
+      const f = index.getFile(archiveId, fileId);
+      if (f?.data?.length) return int8ArrayToUint8Array(f.data);
+    } catch {
+      /* missing archive */
+    }
+    return null;
+  };
+
+  const a = tryPair(scriptId, 0);
+  if (a) return a;
+  const b = tryPair(0, scriptId);
+  if (b) return b;
+  try {
+    const f = index.getFileSmart(scriptId);
+    if (f?.data?.length) return int8ArrayToUint8Array(f.data);
+  } catch {
+    /* getFileSmart throws if layout unknown */
+  }
+  return null;
+}
 
 export type ScriptSwitchTable = Map<number, number>;
 
@@ -26,40 +58,34 @@ export class Script {
     if (first !== undefined) Script.cachedScripts.delete(first);
   }
 
-  static async getScript(
-    var0: number,
-    rev: string | number,
-    cacheHeaders: HeadersInit,
-  ): Promise<Script | null> {
+  static async getScript(var0: number): Promise<Script | null> {
     const hit = Script.cachedScripts.get(var0);
     if (hit) return hit;
 
-    const revStr = encodeURIComponent(String(rev));
-    const urls = [
-      `/api/cache-proxy/diff/clientscript/${var0}?rev=${revStr}`,
-    ];
-
-    for (const url of urls) {
-      const r = await fetch(url, { headers: cacheHeaders, cache: "force-cache" });
-      if (!r.ok) continue;
-      const payload = (await r.json()) as { rawBytesBase64?: string };
-      const b64 = payload.rawBytesBase64;
-      if (!b64) continue;
-      const bin = atob(b64);
-      const bytes = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-      try {
-        const var1 = Script.newScript(bytes);
-        var1.cacheKey = var0;
-        Script.evictOldestIfNeeded(var0);
-        Script.cachedScripts.set(var0, var1);
-        console.log(`[cs2] decoded script id=${var0} ok`);
-        return var1;
-      } catch (err) {
-        console.error(`[cs2] failed to decode script id=${var0}`, err);
-      }
+    const { clientScriptIndex } = getCs2RuntimeContext();
+    if (!clientScriptIndex) {
+      console.warn(
+        `[cs2] no client script cache index (DAT2 index ${IndexType.DAT2.clientScript}); cannot load script ${var0}`,
+      );
+      return null;
     }
-    return null;
+
+    const bytes = readClientScriptFromIndex(clientScriptIndex, var0);
+    if (!bytes?.length) {
+      console.warn(`[cs2] missing script bytes in cache for id=${var0}`);
+      return null;
+    }
+
+    try {
+      const var1 = Script.newScript(bytes);
+      var1.cacheKey = var0;
+      Script.evictOldestIfNeeded(var0);
+      Script.cachedScripts.set(var0, var1);
+      return var1;
+    } catch (err) {
+      console.error(`[cs2] failed to decode script id=${var0}`, err);
+      return null;
+    }
   }
 
   static newScript(var0: Uint8Array): Script {

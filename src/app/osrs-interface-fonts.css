@@ -1,0 +1,324 @@
+/**
+ * OSRS-style interface fonts for canvas `fillText` (see Rasterizer2D.FONT_BY_ID).
+ * Glyph data from RuneStar/fonts (CC0-1.0) — files in /public/fonts/runescape/.
+ */
+
+@font-face {
+  font-family: "OSRS Plain 11";
+  src: url("/fonts/runescape/RuneScape-Plain-11.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "OSRS Plain 11";
+  src: url("/fonts/runescape/RuneScape-Plain-11.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "OSRS Plain 11";
+  src: url("/fonts/runescape/RuneScape-Plain-11.ttf") format("truetype");
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "OSRS Plain 11";
+  src: url("/fonts/runescape/RuneScape-Plain-11.ttf") format("truetype");
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "OSRS Plain 12";
+  src: url("/fonts/runescape/RuneScape-Plain-12.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "OSRS Plain 12";
+  src: url("/fonts/runescape/RuneScape-Plain-12.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "OSRS Plain 12";
+  src: url("/fonts/runescape/RuneScape-Plain-12.ttf") format("truetype");
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "OSRS Plain 12";
+  src: url("/fonts/runescape/RuneScape-Plain-12.ttf") format("truetype");
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "OSRS Bold 12";
+  src: url("/fonts/runescape/RuneScape-Bold-12.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "OSRS Bold 12";
+  src: url("/fonts/runescape/RuneScape-Bold-12.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "OSRS Bold 12";
+  src: url("/fonts/runescape/RuneScape-Bold-12.ttf") format("truetype");
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "OSRS Bold 12";
+  src: url("/fonts/runescape/RuneScape-Bold-12.ttf") format("truetype");
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "OSRS Quill 8";
+  src: url("/fonts/runescape/RuneScape-Quill-8.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "OSRS Quill 8";
+  src: url("/fonts/runescape/RuneScape-Quill-8.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "OSRS Quill 8";
+  src: url("/fonts/runescape/RuneScape-Quill-8.ttf") format("truetype");
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "OSRS Quill 8";
+  src: url("/fonts/runescape/RuneScape-Quill-8.ttf") format("truetype");
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "OSRS Quill";
+  src: url("/fonts/runescape/RuneScape-Quill.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "OSRS Quill";
+  src: url("/fonts/runescape/RuneScape-Quill.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "OSRS Quill";
+  src: url("/fonts/runescape/RuneScape-Quill.ttf") format("truetype");
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "OSRS Quill";
+  src: url("/fonts/runescape/RuneScape-Quill.ttf") format("truetype");
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "OSRS Quill Caps";
+  src: url("/fonts/runescape/RuneScape-Quill-Caps.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "OSRS Quill Caps";
+  src: url("/fonts/runescape/RuneScape-Quill-Caps.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "OSRS Quill Caps";
+  src: url("/fonts/runescape/RuneScape-Quill-Caps.ttf") format("truetype");
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "OSRS Quill Caps";
+  src: url("/fonts/runescape/RuneScape-Quill-Caps.ttf") format("truetype");
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "OSRS Fairy";
+  src: url("/fonts/runescape/RuneScape-Fairy.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "OSRS Fairy";
+  src: url("/fonts/runescape/RuneScape-Fairy.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "OSRS Fairy";
+  src: url("/fonts/runescape/RuneScape-Fairy.ttf") format("truetype");
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "OSRS Fairy";
+  src: url("/fonts/runescape/RuneScape-Fairy.ttf") format("truetype");
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "OSRS Fairy Large";
+  src: url("/fonts/runescape/RuneScape-Fairy-Large.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "OSRS Fairy Large";
+  src: url("/fonts/runescape/RuneScape-Fairy-Large.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "OSRS Fairy Large";
+  src: url("/fonts/runescape/RuneScape-Fairy-Large.ttf") format("truetype");
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "OSRS Fairy Large";
+  src: url("/fonts/runescape/RuneScape-Fairy-Large.ttf") format("truetype");
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "OSRS Barbarian Assault";
+  src: url("/fonts/runescape/RuneScape-Barbarian-Assault.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "OSRS Barbarian Assault";
+  src: url("/fonts/runescape/RuneScape-Barbarian-Assault.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "OSRS Barbarian Assault";
+  src: url("/fonts/runescape/RuneScape-Barbarian-Assault.ttf") format("truetype");
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "OSRS Barbarian Assault";
+  src: url("/fonts/runescape/RuneScape-Barbarian-Assault.ttf") format("truetype");
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "OSRS Surok";
+  src: url("/fonts/runescape/RuneScape-Surok.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "OSRS Surok";
+  src: url("/fonts/runescape/RuneScape-Surok.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "OSRS Surok";
+  src: url("/fonts/runescape/RuneScape-Surok.ttf") format("truetype");
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "OSRS Surok";
+  src: url("/fonts/runescape/RuneScape-Surok.ttf") format("truetype");
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+}

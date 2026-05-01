@@ -1,5 +1,5 @@
 import type { ComponentType, InterfaceEntry } from "./component-types";
-import type { VarbitDefinitionLookup } from "./varbit-definition";
+import type { VarbitDefinitionLookup } from "@/rs/config/vartype/bit/VarBitTypeLoader";
 import { experienceForMaxLevel } from "./osrs-experience-table";
 import { Varps } from "./varps";
 

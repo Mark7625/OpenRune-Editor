@@ -1,9 +1,9 @@
 import type { ComponentType, InterfaceEntry } from "./component-types";
 import { InterfaceParent, registerInterfaceParent, parseInterfaceParentsLookup } from "./interface-parent";
 import { Cs1Interpreter, type Cs1SimState } from "./cs1-interpreter";
-import type { VarbitDefinitionLookup } from "./varbit-definition";
+import type { VarbitDefinitionLookup } from "@/rs/config/vartype/bit/VarBitTypeLoader";
 import { Rasterizer2D } from "./rasterizer2d";
-import { type Sprite, fetchSpriteCached } from "./sprite";
+import type { Sprite } from "@/rs/sprite/InterfaceCanvasSprite";
 import { runWidgetOnLoadListener } from "./cs2/runWidgetOnLoadListener";
 
 let cs1InterfaceEntry: InterfaceEntry | null = null;
@@ -372,24 +372,14 @@ function resizeInterfaceScroll(var0: ComponentType): void {
 export class InterfaceManager {
   private rast: Rasterizer2D;
 
-  private spriteCache: Map<number, Sprite | null> = new Map();
-
-  private cacheHeaders: HeadersInit;
-  private rev: string | number;
+  private readonly spritesById: ReadonlyMap<number, Sprite>;
   public readonly validRootWidgets = Array.from({ length: 100 }, () => false);
   private drawBoundsByComponentId = new Map<number, ComponentDrawBounds>();
   private drawBoundsByComponentRef: WeakMap<ComponentType, ComponentDrawBounds> = new WeakMap();
 
-  onSpriteLoaded: (() => void) | null = null;
-
-  constructor(
-    ctx: CanvasRenderingContext2D,
-    cacheHeaders: HeadersInit,
-    rev: string | number,
-  ) {
+  constructor(ctx: CanvasRenderingContext2D, spritesById: ReadonlyMap<number, Sprite> = new Map<number, Sprite>()) {
     this.rast = new Rasterizer2D(ctx);
-    this.cacheHeaders = cacheHeaders;
-    this.rev = rev;
+    this.spritesById = spritesById;
   }
 
   drawInterfaceClipped(
@@ -976,19 +966,7 @@ export class InterfaceManager {
   }
 
   private getOrFetchSprite(spriteId: number): Sprite | null {
-    const cached = this.spriteCache.get(spriteId);
-    if (cached !== undefined) return cached;
-
-    this.spriteCache.set(spriteId, null);
-    fetchSpriteCached(spriteId, this.rev, this.cacheHeaders).then((sprite) => {
-      this.spriteCache.set(spriteId, sprite);
-      this.onSpriteLoaded?.();
-    });
-    return null;
-  }
-
-  clearSpriteCache() {
-    this.spriteCache.clear();
+    return this.spritesById.get(spriteId) ?? null;
   }
 
   getComponentDrawBounds(componentId: number): ComponentDrawBounds | null {

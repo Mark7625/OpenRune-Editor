@@ -1,4 +1,4 @@
-import type { VarbitDefinition, VarbitDefinitionLookup } from "./varbit-definition";
+import type { VarbitDefinition, VarbitDefinitionLookup } from "@/rs/config/vartype/bit/VarBitTypeLoader";
 
 export const DEFAULT_VARP_MAIN_LENGTH = 10_000;
 

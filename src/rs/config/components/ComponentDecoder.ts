@@ -72,29 +72,15 @@ export class ComponentDecoder {
                 const component = this.readFast(file, buf);
 
                 const combinedId = (group << 16) | file;
-                const id = (combinedId >>> 16) & 0xFFFF;
                 const childID = combinedId & 0xFFFF;
 
-                component.packedId = id;
+                const layerID = (group << 16) | component.layer;
+
+                component.layer = layerID;
+                component.internalId = combinedId;
                 component.id = childID;
 
                 components[file] = component;
-            }
-
-
-            for (const component of Object.values(components)) {
-                const parentId = component.layer;
-
-                if (parentId == null || parentId === -1) {
-                    continue;
-                }
-
-                const parent = components[parentId];
-                if (!parent) {
-                    continue;
-                }
-
-                (parent.children ??= []).push(component);
             }
 
             result[group] = {

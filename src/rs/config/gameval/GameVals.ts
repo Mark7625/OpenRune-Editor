@@ -6,7 +6,8 @@ import { Interface, InterfaceComponent } from "./impl/Interface";
 import { Sprite } from "./impl/Sprite";
 import { Table, TableColumn } from "./impl/Table";
 
-const GAMEVALS_INDEX = 24;
+/** DAT2 config index for packed gameval tables. */
+export const GAMEVALS_CACHE_INDEX_ID = 24;
 
 export class GameVals {
     private readonly cache: CacheSystem;
@@ -45,7 +46,7 @@ export class GameVals {
     private load(type: GameValGroupType): GameValElement[] {
         const resolvedType = this.resolveType(type);
 
-        const index = this.cache.getIndex(GAMEVALS_INDEX);
+        const index = this.cache.getIndex(GAMEVALS_CACHE_INDEX_ID);
         const fileIds = index.getFileIds(resolvedType.id) ?? new Int32Array(0);
         const archive = index.getArchive(resolvedType.id);
 
@@ -64,7 +65,7 @@ export class GameVals {
     private resolveType(type: GameValGroupType): GameValGroupType {
         if (type !== GameValGroupType.IFTYPES) return type;
 
-        const index = this.cache.getIndex(GAMEVALS_INDEX);
+        const index = this.cache.getIndex(GAMEVALS_CACHE_INDEX_ID);
         const hasFiles = index.getFileCount(type.id) > 0;
 
         return hasFiles ? type : GameValGroupType.IFTYPES_V2;
