@@ -40,6 +40,8 @@ export type MapEditorDockPanelId =
     | "editor-underlays"
     | "editor-overlays"
     | "editor-height"
+    | "editor-object-selector"
+    | "editor-tile-flags"
     | "editor-sandbox-terrain"
     | "editor-paint-tools"
     | "editor-brush-workspace"
@@ -114,6 +116,8 @@ export interface EditorToolPlugin {
     actions?: readonly EditorToolAction[];
     data?: EditorToolDataFns;
     palettePanel?: ComponentType<MapEditorPalettePanelProps>;
+    /** When false, brush type and radius controls are disabled (e.g. object selector). Default true. */
+    usesBrushControls?: boolean;
     brushStripHint?: string;
     paintPolicy?: EditorToolPaintPolicy;
     resolveUnderlayPaintTypeId?: (

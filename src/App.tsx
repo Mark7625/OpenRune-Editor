@@ -26,6 +26,18 @@ const LazyMapViewerApp = dynamic(
     },
 );
 
+const LazyMapEditorPopoutPage = dynamic(
+    () => import("./mapeditor/MapEditorPopoutPage").then((m) => m.MapEditorPopoutPage),
+    {
+        ssr: false,
+        loading: () => (
+            <div className="flex h-full w-full items-center justify-center text-muted-foreground">
+                Loading panel...
+            </div>
+        ),
+    },
+);
+
 const LazyMapEditorApp = dynamic(
     () => import("./mapeditor/MapEditorApp").then((m) => m.MapEditorApp),
     {
@@ -273,17 +285,23 @@ function SidebarNav({
 
 export default function App(): JSX.Element {
     const location = useLocation();
-    const isMapViewerRoute = location.pathname.startsWith("/map");
+    const isMapEditorPopoutRoute = location.pathname.startsWith("/map/editor/popout");
+    const isMapViewerRoute = location.pathname.startsWith("/map") && !isMapEditorPopoutRoute;
     const isInterfaceViewerRoute = location.pathname.startsWith("/interface");
+    const hideAppSidebar = isInterfaceViewerRoute || isMapEditorPopoutRoute;
     const { sidebarCollapsed, toggleSidebarCollapsed } = useShellPreferences();
+
+    if (isMapEditorPopoutRoute) {
+        return <LazyMapEditorPopoutPage />;
+    }
 
     return (
         <div className="flex h-dvh w-full">
             <aside
                 className={cn(
-                    "relative z-20 hidden h-dvh shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground transition-[width] duration-300 ease-out md:flex",
+                    "relative z-20 h-dvh shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground transition-[width] duration-300 ease-out",
+                    hideAppSidebar ? "hidden" : "hidden md:flex",
                     sidebarCollapsed ? "w-16" : "w-60",
-                    isInterfaceViewerRoute && "hidden",
                 )}
                 aria-label="Primary navigation"
             >
@@ -324,14 +342,14 @@ export default function App(): JSX.Element {
                 <main
                     data-app-main
                     className={
-                        isMapViewerRoute || isInterfaceViewerRoute
+                        isMapViewerRoute || isInterfaceViewerRoute || isMapEditorPopoutRoute
                             ? "flex min-h-0 flex-1 flex-col overflow-hidden bg-background p-0"
                             : "flex-1 overflow-y-auto bg-background p-4 md:p-6"
                     }
                 >
                     <div
                         className={
-                            isMapViewerRoute || isInterfaceViewerRoute
+                            isMapViewerRoute || isInterfaceViewerRoute || isMapEditorPopoutRoute
                                 ? "flex h-full min-h-0 w-full flex-1 bg-background"
                                 : "mx-auto w-full max-w-7xl"
                         }
@@ -348,6 +366,10 @@ export default function App(): JSX.Element {
                             <Route
                                 path="/map/editor"
                                 element={<LazyMapEditorApp />}
+                            />
+                            <Route
+                                path="/map/editor/popout"
+                                element={<LazyMapEditorPopoutPage />}
                             />
                             <Route path="*" element={<Navigate to="/" replace />} />
                         </Routes>

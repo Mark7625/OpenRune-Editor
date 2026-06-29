@@ -10,6 +10,35 @@ import { WallDecoration } from "./WallDecoration";
 import { Entity } from "./entity/Entity";
 import { EntityTag, EntityType, getEntityTypeFromTag } from "./entity/EntityTag";
 
+export function loadTileRenderFlagsTextureData(scene: Scene): Uint8Array {
+    return packTileRenderFlagsTextureData(
+        scene.tileRenderFlags,
+        scene.sizeX,
+        scene.sizeY,
+        scene.levels,
+    );
+}
+
+export function packTileRenderFlagsTextureData(
+    tileRenderFlags: Uint8Array[][],
+    sizeX: number,
+    sizeY: number,
+    levels: number = Scene.MAX_LEVELS,
+): Uint8Array {
+    const tileRenderFlagsTextureData = new Uint8Array(levels * sizeX * sizeY);
+
+    let dataIndex = 0;
+    for (let level = 0; level < levels; level++) {
+        for (let y = 0; y < sizeY; y++) {
+            for (let x = 0; x < sizeX; x++) {
+                tileRenderFlagsTextureData[dataIndex++] = tileRenderFlags[level][x][y];
+            }
+        }
+    }
+
+    return tileRenderFlagsTextureData;
+}
+
 export function loadHeightMapTextureData(scene: Scene): Float32Array {
     const heightMapTextureData = new Float32Array(Scene.MAX_LEVELS * scene.sizeX * scene.sizeY);
 

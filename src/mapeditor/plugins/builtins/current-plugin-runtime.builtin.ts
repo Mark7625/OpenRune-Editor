@@ -10,13 +10,21 @@ import type {
 import { EditorLayoutRegion } from "./builtin-plugin-types";
 import { quickControlsNavPlugin } from "./editor-view-nav.plugin";
 import { heightEditorTool } from "./height.plugin";
+import { objectSelectorEditorTool } from "./object-selector.plugin";
 import { overlayEditorTool } from "./overlay.plugin";
+import { tileFlagsEditorTool } from "./tile-flags.plugin";
 import { underlayEditorTool } from "./underlay.plugin";
 import type { IEditorPluginHost } from "../editor-plugin-host";
 import type { MapEditorTool } from "../../map-editor-kinds";
 import { getBuiltinEditorToolPlugin } from "./current-plugin-layout.builtin";
 
-export { heightEditorTool, overlayEditorTool, underlayEditorTool };
+export {
+    heightEditorTool,
+    objectSelectorEditorTool,
+    overlayEditorTool,
+    tileFlagsEditorTool,
+    underlayEditorTool,
+};
 
 export const BUILTIN_EDITOR_VIEW_STICKY_NAV_PLUGINS: readonly EditorViewStickyNavPlugin[] = [
     quickControlsNavPlugin,

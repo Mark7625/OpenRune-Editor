@@ -4,6 +4,7 @@ import mainVertShader from "../../../mapviewer/webgl/shaders/main.vert.glsl";
 import gridVertShader from "./grid.vert.glsl";
 import highlightTileFragShader from "./highlight-tile.frag.glsl";
 import highlightTileVertShader from "./highlight-tile.vert.glsl";
+import objectWireframeVertShader from "./object-wireframe.vert.glsl";
 import simpleFragShader from "./simple.frag.glsl";
 import terrainFragShader from "./terrain.frag.glsl";
 import terrainVertShader from "./terrain.vert.glsl";
@@ -41,3 +42,5 @@ export const TILE_PICKING_PROGRAM = [tilePickingVertShader, simpleFragShader];
 export const HIGHLIGHT_PROGRAM = [highlightTileVertShader, highlightTileFragShader];
 
 export const GRID_PROGRAM = [gridVertShader, simpleFragShader];
+
+export const OBJECT_WIREFRAME_PROGRAM = [objectWireframeVertShader, simpleFragShader];

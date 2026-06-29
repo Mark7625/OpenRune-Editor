@@ -15,7 +15,8 @@ import { SeqTypeLoader } from "../../rs/config/seqtype/SeqTypeLoader";
 import { getMapSquareId } from "../../rs/map/MapFileIndex";
 import { CollisionFlag } from "../../rs/pathfinder/flag/CollisionFlag";
 import { CollisionMap } from "../../rs/scene/CollisionMap";
-import { Scene } from "../../rs/scene/Scene";
+import { Scene, packTileRenderFlagsTextureData } from "../../rs/scene/Scene";
+import { createTileRenderFlagsTexture } from "./TileRenderFlagsTexture";
 import { DrawRange, newDrawRange } from "./DrawRange";
 import { SdMapData } from "./loader/SdMapData";
 import { LocAnimated } from "./loc/LocAnimated";
@@ -121,6 +122,12 @@ export class WebGLMapSquare {
             },
         );
 
+        const tileRenderFlagsTexture = createTileRenderFlagsTexture(
+            app,
+            borderSize,
+            packTileRenderFlagsTextureData(tileRenderFlags, heightMapSize, heightMapSize),
+        );
+
         // const time = performance.now() * 0.001;
 
         const createDrawCall = (
@@ -137,6 +144,7 @@ export class WebGLMapSquare {
                 .texture("u_textures", textureArray)
                 .texture("u_textureMaterials", textureMaterials)
                 .texture("u_heightMap", heightMapTexture)
+                .texture("u_tileRenderFlags", tileRenderFlagsTexture)
                 // .texture("u_modelInfoTexture", modelInfoTexture)
                 .drawRanges(...drawRanges);
             if (modelInfoTexture) {
@@ -268,6 +276,7 @@ export class WebGLMapSquare {
             vertexArray,
 
             heightMapTexture,
+            tileRenderFlagsTexture,
 
             modelInfoTexture,
             modelInfoTextureAlpha,
@@ -316,6 +325,7 @@ export class WebGLMapSquare {
         readonly vertexArray: VertexArray,
 
         readonly heightMapTexture: Texture,
+        readonly tileRenderFlagsTexture: Texture,
 
         // Model info
         readonly modelInfoTexture: Texture,
@@ -389,6 +399,7 @@ export class WebGLMapSquare {
         this.indexBuffer.delete();
 
         this.heightMapTexture.delete();
+        this.tileRenderFlagsTexture.delete();
 
         // Model info
         this.modelInfoTexture.delete();

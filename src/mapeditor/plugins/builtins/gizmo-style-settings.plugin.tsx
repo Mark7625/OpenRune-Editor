@@ -122,6 +122,25 @@ function GizmoStyleSettingsTab({ pluginHost }: { pluginHost: import("../types").
                     }
                 />
             </div>
+            <p className="text-xs font-medium text-muted-foreground">Object selector wireframe</p>
+            <RgbaColorRow
+                label="Hover"
+                value={appearance.objectSelector.hover}
+                onChange={(next) =>
+                    pluginHost.setGizmoAppearance({
+                        objectSelector: { ...appearance.objectSelector, hover: next },
+                    })
+                }
+            />
+            <RgbaColorRow
+                label="Selected"
+                value={appearance.objectSelector.selected}
+                onChange={(next) =>
+                    pluginHost.setGizmoAppearance({
+                        objectSelector: { ...appearance.objectSelector, selected: next },
+                    })
+                }
+            />
         </div>
     );
 }

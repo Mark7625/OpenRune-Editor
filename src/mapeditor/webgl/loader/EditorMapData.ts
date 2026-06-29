@@ -1,5 +1,6 @@
 import { DrawRange } from "../../../mapviewer/webgl/DrawRange";
-import { LocAnimatedData } from "../../../mapviewer/webgl/loc/LocAnimatedData";
+import type { SceneLocData } from "../sceneLocData";
+import type { EditorMapObjectChunkData } from "./EditorMapObjectChunkData";
 
 export interface SceneData {
     levels: number;
@@ -33,13 +34,9 @@ export interface EditorMapData {
 
     terrainVertices: Uint8Array;
     terrainDrawRanges: DrawRange[];
-    objectVertices: Uint8Array;
-    objectIndices: Int32Array;
-    objectModelTextureData: Uint16Array;
-    objectModelTextureDataAlpha: Uint16Array;
-    objectDrawRanges: DrawRange[];
-    objectDrawRangesAlpha: DrawRange[];
-    locsAnimated: LocAnimatedData[];
+
+    sceneLocData: SceneLocData;
+    objectChunks: EditorMapObjectChunkData[];
 
     heightMapTextureData: Float32Array;
 }

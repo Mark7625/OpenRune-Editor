@@ -24,6 +24,10 @@ uniform int u_drawIdOffset;
 uniform vec2 u_mapPos;
 uniform float u_timeLoaded;
 
+uniform float u_viewPlaneMax;
+uniform float u_hideBelowViewPlane;
+uniform float u_planeClipEnabled;
+
 
 uniform highp usampler2D u_modelInfoTexture;
 uniform mediump isampler2DArray u_heightMap;
@@ -44,6 +48,7 @@ flat out vec4 v_interactId;
 
 #include "./includes/material.glsl";
 #include "./includes/height-map.glsl";
+#include "./includes/plane-visibility.glsl";
 
 #include "./includes/vertex.glsl";
 
@@ -96,6 +101,13 @@ void main() {
     v_alphaCutOff = material.alphaCutOff;
 
     ModelInfo modelInfo = decodeModelInfo(offset);
+
+    if (u_planeClipEnabled > 0.5) {
+        if (!isScenePlaneVisible(int(modelInfo.plane), modelInfo.tilePos, u_viewPlaneMax, u_hideBelowViewPlane)) {
+            gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+            return;
+        }
+    }
 
     vec3 localPos = vertex.pos + vec3(modelInfo.tilePos.x, 0, modelInfo.tilePos.y);
 

@@ -36,7 +36,8 @@ const PANEL_RESTORE: { id: string; title: string }[] = [
     { id: "editor-underlays", title: "Underlays" },
     { id: "editor-overlays", title: "Overlays" },
     { id: "editor-height", title: "Height" },
-    { id: "editor-paint-tools", title: "Tools" },
+    { id: "editor-tile-flags", title: "Tile flags" },
+    { id: "editor-object-selector", title: "Objects" },
     { id: "editor-brush-workspace", title: "Brush" },
     { id: "editor-history", title: "History" },
     { id: "editor-minimap", title: "Minimap" },
@@ -126,7 +127,10 @@ export function MapEditorTitleBar({ pluginHost, dockApi }: MapEditorTitleBarProp
 
     return (
         <TooltipProvider delayDuration={300}>
-            <header className="flex h-11 shrink-0 items-center gap-2 border-b border-border bg-card/80 px-3 backdrop-blur-sm">
+            <header
+                data-map-editor-title-bar
+                className="flex h-11 shrink-0 items-center gap-2 border-b border-border bg-card/80 px-3 backdrop-blur-sm"
+            >
                 <div className="flex min-w-0 items-center gap-2">
                     <span className="truncate text-sm font-semibold text-foreground">Map editor</span>
                     <Badge variant="secondary" className="hidden max-w-[10rem] truncate font-normal sm:inline-flex">

@@ -5106,7 +5106,7 @@ picocolors@^1.0.0, picocolors@^1.0.1, picocolors@^1.1.1, picocolors@1.1.1:
   resolved "https://registry.npmjs.org/picocolors/-/picocolors-1.1.1.tgz"
   integrity sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA==
 
-picogl@^0.17.9:
+picogl@0.17.9:
   version "0.17.9"
   resolved "https://registry.npmjs.org/picogl/-/picogl-0.17.9.tgz"
   integrity sha512-TfqB7jlD5FTO4a/Rp9wnMhVjPA0XZ/xbtLS2f8eHtOmVtIOhFD7Wf0jUL6kDjww3bgF/REEV9oPreBeGvWFlUQ==

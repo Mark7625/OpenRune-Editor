@@ -32,6 +32,10 @@ import { computeOverlayMatchFlood, overlayWorldKey } from "../overlay-flood-fill
 import { MapEditorRenderer } from "../MapEditorRenderer";
 import { EditorMapSquare } from "./EditorMapSquare";
 import type { EditorMapData } from "./loader/EditorMapData";
+import type { EditorMapObjectChunkData } from "./loader/EditorMapObjectChunkData";
+import { OBJECT_CHUNK_COUNT } from "./objectChunk";
+import { cloneSceneLocData, serializeSceneLocData } from "./sceneLocData";
+import { cloneSceneTerrainData } from "../liveMinimapWorkerPayload";
 import {
     LEVEL_TILE_VERTICES,
     TOTAL_TILE_VERTICES,
@@ -42,6 +46,7 @@ import { addTerrain, addTerrainTile } from "./loader/EditorMapDataLoader";
 import {
     DEFAULT_BRUSH_OUTLINE,
     DEFAULT_GIZMO_APPEARANCE,
+    DEFAULT_OBJECT_SELECTOR,
     type MapEditorGizmoAppearance,
     clampThickness,
     loadGizmoAppearanceFromStorage,
@@ -49,11 +54,31 @@ import {
 import {
     GRID_PROGRAM,
     HIGHLIGHT_PROGRAM,
+    OBJECT_WIREFRAME_PROGRAM,
     TILE_PICKING_PROGRAM,
     createObjectProgram,
     createTerrainProgram,
 } from "./shaders/Shaders";
+import { buildModelWireframeLines, type WireframeModel } from "./objectWireframeMesh";
+import {
+    type EditorObjectRef,
+    editorObjectRefKey,
+    findObjectAtHover,
+    getObjectPickLevelsAt,
+} from "./sceneLocPicker";
+import { LocModelType } from "../../rs/config/loctype/LocModelType";
+import { Model } from "../../rs/model/Model";
+import { ModelData } from "../../rs/model/ModelData";
 import { applyHeightToolRuntime } from "../plugins/builtins/height-edit-runtime";
+import { applyTileRenderFlagsRuntime } from "../plugins/builtins/tile-flags-edit-runtime";
+import { getTileFlagsToolModel } from "../plugins/builtins/tile-flags-tool-model";
+import {
+    formatTileRenderFlags,
+    shouldShowTileRenderFlag,
+    TILE_RENDER_FLAG_DESCRIPTORS,
+} from "../../rs/map/TileRenderFlags";
+import { syncSceneLocHeightsForHeightEdit, markObjectChunksForHeightEdit } from "./scene-loc-height-sync";
+import { recordHistoryTileMutation } from "../map-editor-history-record";
 
 const MAX_TEXTURES = 2048;
 const TEXTURE_SIZE = 128;
@@ -71,6 +96,7 @@ export class WebGLMapEditorRenderer extends MapEditorRenderer<EditorMapSquare> {
     terrainProgram?: Program;
     objectProgram?: Program;
     objectProgramAlpha?: Program;
+    objectWireframeProgram?: Program;
     tilePickingProgram?: Program;
     highlightTileProgram?: Program;
     gridProgram?: Program;
@@ -109,15 +135,31 @@ export class WebGLMapEditorRenderer extends MapEditorRenderer<EditorMapSquare> {
     gridDrawCall!: DrawCall;
     chunkGridDrawCall!: DrawCall;
 
+    objectWireframeVertexBuffer?: VertexBuffer;
+    objectWireframeVertexArray?: VertexArray;
+    objectWireframeDrawCall?: DrawCall;
+    private readonly wireframeLineCache = new Map<string, Float32Array>();
+
+    objectSelectorHoverColor: vec4 = vec4.fromValues(...DEFAULT_OBJECT_SELECTOR.hover);
+    objectSelectorSelectedColor: vec4 = vec4.fromValues(...DEFAULT_OBJECT_SELECTOR.selected);
+
     // State
     tilePickingBuffer = new Uint8Array(4);
 
     hoverWorldX: number = -1;
     hoverWorldY: number = -1;
 
+    private tileFlagsPaintedKeys = new Set<string>();
+    private tileFlagsPaintStrokeActive = false;
+    private paintHistoryStrokeActive = false;
+
     lastTimeTerrainUpdated: number = 0;
     updatedTerrainMapIds: Set<number> = new Set();
     loadingTerrainMapIds: Set<number> = new Set();
+
+    lastTimeObjectsUpdated: number = 0;
+    updatedObjectChunksByMapId: Map<number, Set<number>> = new Map();
+    loadingObjectChunksByMapId: Map<number, Set<number>> = new Map();
 
     drawGrid: boolean = false;
     drawChunkGrid: boolean = false;
@@ -130,6 +172,8 @@ export class WebGLMapEditorRenderer extends MapEditorRenderer<EditorMapSquare> {
     brushOutlineThickness: number = DEFAULT_BRUSH_OUTLINE.outlineThickness;
 
     affectedTilesMap: Map<number, Set<number>> = new Map();
+    /** Local tiles where terrain height was actually changed (not terrain mesh neighbors). */
+    heightChangedTilesMap: Map<number, Set<number>> = new Map();
     private brushOffsetsCache = new Map<string, ReadonlyArray<readonly [number, number]>>();
     private lastTerrainSmoothingEnabled = this.host.terrainSmoothingEnabled;
     private readonly highlightFullTileRange = newDrawRange(0, 6);
@@ -187,6 +231,7 @@ export class WebGLMapEditorRenderer extends MapEditorRenderer<EditorMapSquare> {
         this.tilePickingDrawCall.drawRanges(newDrawRange(0, 64 * 64 * 6));
 
         this.highlightTileDrawCall.uniformBlock("SceneUniforms", this.sceneUniformBuffer);
+        this.objectWireframeDrawCall?.uniformBlock("SceneUniforms", this.sceneUniformBuffer);
         this.highlightTileDrawCall.uniform("u_highlightShapeMode", 0);
         this.highlightTileDrawCall.uniform("u_cornerA", [0, 0]);
         this.highlightTileDrawCall.uniform("u_cornerB", [0, 0]);
@@ -215,6 +260,7 @@ export class WebGLMapEditorRenderer extends MapEditorRenderer<EditorMapSquare> {
             TILE_PICKING_PROGRAM,
             HIGHLIGHT_PROGRAM,
             GRID_PROGRAM,
+            OBJECT_WIREFRAME_PROGRAM,
         );
 
         const [
@@ -224,13 +270,28 @@ export class WebGLMapEditorRenderer extends MapEditorRenderer<EditorMapSquare> {
             tilePickingProgram,
             highlightTileProgram,
             gridProgram,
+            objectWireframeProgram,
         ] = programs;
         this.terrainProgram = terrainProgram;
         this.objectProgram = objectProgram;
         this.objectProgramAlpha = objectProgramAlpha;
+        this.objectWireframeProgram = objectWireframeProgram;
         this.tilePickingProgram = tilePickingProgram;
         this.highlightTileProgram = highlightTileProgram;
         this.gridProgram = gridProgram;
+
+        this.objectWireframeVertexBuffer = this.app.createVertexBuffer(
+            PicoGL.FLOAT,
+            3,
+            new Float32Array(0),
+            PicoGL.DYNAMIC_DRAW,
+        );
+        this.objectWireframeVertexArray = this.app
+            .createVertexArray()
+            .vertexAttributeBuffer(0, this.objectWireframeVertexBuffer);
+        this.objectWireframeDrawCall = this.app
+            .createDrawCall(objectWireframeProgram, this.objectWireframeVertexArray)
+            .primitive(PicoGL.LINES);
 
         this.tilePickingDrawCall = this.app.createDrawCall(this.tilePickingProgram);
         this.highlightTileDrawCall = this.app.createDrawCall(this.highlightTileProgram);
@@ -505,6 +566,19 @@ export class WebGLMapEditorRenderer extends MapEditorRenderer<EditorMapSquare> {
         );
 
         const heightMapTextureData = loadHeightMapTextureData(scene);
+        const emptyChunks: EditorMapObjectChunkData[] = [];
+        for (let chunkId = 0; chunkId < OBJECT_CHUNK_COUNT; chunkId++) {
+            emptyChunks.push({
+                chunkId,
+                objectVertices: new Uint8Array(0),
+                objectIndices: new Int32Array(0),
+                objectModelTextureData: new Uint16Array(16 * 4),
+                objectModelTextureDataAlpha: new Uint16Array(16 * 4),
+                objectDrawRanges: [],
+                objectDrawRangesAlpha: [],
+                locsAnimated: [],
+            });
+        }
         return {
             mapX,
             mapY,
@@ -525,15 +599,56 @@ export class WebGLMapEditorRenderer extends MapEditorRenderer<EditorMapSquare> {
             },
             terrainVertices: terrainVertexBuffer.bytes,
             terrainDrawRanges,
-            objectVertices: new Uint8Array(0),
-            objectIndices: new Int32Array(0),
-            objectModelTextureData: new Uint16Array(16 * 4),
-            objectModelTextureDataAlpha: new Uint16Array(16 * 4),
-            objectDrawRanges: [],
-            objectDrawRangesAlpha: [],
-            locsAnimated: [],
+            sceneLocData: { tiles: [] },
+            objectChunks: emptyChunks,
             heightMapTextureData,
         };
+    }
+
+    async queueLoadObjectChunks(map: EditorMapSquare, chunkIds: number[]): Promise<void> {
+        if (chunkIds.length === 0 || !this.sceneUniformBuffer || !this.textureArray || !this.textureMaterials) {
+            return;
+        }
+        const uniqueChunkIds = [...new Set(chunkIds)];
+        const sceneLocData = serializeSceneLocData(map.scene, map.borderSize);
+        map.sceneLocData = sceneLocData;
+        const chunkDataList = await this.host.workerPool.queueLoadEditorMapObjectData(
+            map.mapX,
+            map.mapY,
+            map.borderSize,
+            cloneSceneTerrainData(map.scene),
+            cloneSceneLocData(sceneLocData),
+            uniqueChunkIds,
+            this.host.terrainSmoothingEnabled,
+        );
+        if (!chunkDataList?.length || !this.objectProgram || !this.objectProgramAlpha) {
+            return;
+        }
+        const cycle = (performance.now() * 0.001) / 0.02;
+        for (const chunkData of chunkDataList) {
+            map.updateObjectChunk(
+                this.app,
+                chunkData,
+                this.sceneUniformBuffer,
+                this.textureArray,
+                this.textureMaterials,
+                this.objectProgram,
+                this.objectProgramAlpha,
+                this.host.seqTypeLoader,
+                cycle,
+            );
+        }
+    }
+
+    scheduleObjectChunkReload(mapId: number, chunkIds: Iterable<number>): void {
+        let pending = this.updatedObjectChunksByMapId.get(mapId);
+        if (!pending) {
+            pending = new Set();
+            this.updatedObjectChunksByMapId.set(mapId, pending);
+        }
+        for (const chunkId of chunkIds) {
+            pending.add(chunkId);
+        }
     }
 
     async queueLoadTerrain(map: EditorMapSquare): Promise<void> {
@@ -585,8 +700,10 @@ export class WebGLMapEditorRenderer extends MapEditorRenderer<EditorMapSquare> {
         const cycle = timeSec / 0.02;
         for (let i = 0; i < this.mapManager.visibleMapCount; i++) {
             const map = this.mapManager.visibleMaps[i];
-            for (const loc of map.locsAnimated) {
-                loc.update(this.host.seqFrameLoader, cycle);
+            for (const chunk of map.objectChunks) {
+                for (const loc of chunk.locsAnimated) {
+                    loc.update(this.host.seqFrameLoader, cycle);
+                }
             }
         }
     }
@@ -637,10 +754,21 @@ export class WebGLMapEditorRenderer extends MapEditorRenderer<EditorMapSquare> {
 
         // Pick hover first, then paint (updates flood stroke lock), then draw so preview matches this frame.
         this.renderTilePicking();
+        this.updateObjectSelectorState();
 
         this.handleTileManipulation(time);
 
         this.renderTerrain(time);
+        this.updateTileFlagsHoverDebug();
+
+        for (const map of this.mapManager.mapSquares.values()) {
+            if (map.objectUpdated && map.dirtyObjectChunks.size > 0) {
+                this.scheduleObjectChunkReload(
+                    getMapSquareId(map.mapX, map.mapY),
+                    map.dirtyObjectChunks,
+                );
+            }
+        }
 
         if (time - this.lastTimeTerrainUpdated > 100 && this.updatedTerrainMapIds.size > 0) {
             for (const mapId of this.updatedTerrainMapIds) {
@@ -655,7 +783,233 @@ export class WebGLMapEditorRenderer extends MapEditorRenderer<EditorMapSquare> {
             this.lastTimeTerrainUpdated = time;
         }
 
-        this.host.debugText = undefined;
+        if (time - this.lastTimeObjectsUpdated > 100 && this.updatedObjectChunksByMapId.size > 0) {
+            for (const [mapId, chunkIds] of this.updatedObjectChunksByMapId) {
+                if (chunkIds.size === 0) {
+                    continue;
+                }
+                const map = this.mapManager.getMapById(mapId);
+                if (!map) {
+                    continue;
+                }
+                const loading = this.loadingObjectChunksByMapId.get(mapId) ?? new Set();
+                const toLoad = [...chunkIds].filter((id) => !loading.has(id));
+                if (toLoad.length === 0) {
+                    continue;
+                }
+                for (const id of toLoad) {
+                    loading.add(id);
+                }
+                this.loadingObjectChunksByMapId.set(mapId, loading);
+                void this.queueLoadObjectChunks(map, toLoad).finally(() => {
+                    const loadSet = this.loadingObjectChunksByMapId.get(mapId);
+                    if (loadSet) {
+                        for (const id of toLoad) {
+                            loadSet.delete(id);
+                            chunkIds.delete(id);
+                        }
+                        if (loadSet.size === 0) {
+                            this.loadingObjectChunksByMapId.delete(mapId);
+                        }
+                    }
+                    if (chunkIds.size === 0) {
+                        this.updatedObjectChunksByMapId.delete(mapId);
+                        map.objectUpdated = false;
+                        map.dirtyObjectChunks.clear();
+                    }
+                });
+            }
+            this.lastTimeObjectsUpdated = time;
+        }
+    }
+
+    private isTileFlagsToolActive(): boolean {
+        return this.host.editorTool === "tile-flags" && this.host.isEditorToolPluginEnabled("tile-flags");
+    }
+
+    private isTileFlagsPainting(inputManager = this.host.inputManager): boolean {
+        return this.isTileFlagsToolActive() && inputManager.isKeyDown("MouseLeft");
+    }
+
+    private syncTileFlagsPaintStroke(): void {
+        const painting = this.isTileFlagsPainting();
+        if (!painting) {
+            this.tileFlagsPaintStrokeActive = false;
+            this.tileFlagsPaintedKeys.clear();
+            return;
+        }
+        if (!this.tileFlagsPaintStrokeActive) {
+            this.tileFlagsPaintStrokeActive = true;
+            this.tileFlagsPaintedKeys.clear();
+        }
+    }
+
+    private syncPaintHistoryStroke(isPainting: boolean): void {
+        if (!isPainting) {
+            if (this.paintHistoryStrokeActive) {
+                this.host.commitHistoryStroke();
+                this.paintHistoryStrokeActive = false;
+            }
+            return;
+        }
+        if (!this.paintHistoryStrokeActive && this.host.editorTool !== "object-selector") {
+            this.host.beginHistoryStroke(this.host.editorTool);
+            this.paintHistoryStrokeActive = true;
+        }
+    }
+
+    private getTileRenderFlagAtWorld(level: number, worldX: number, worldY: number): number | undefined {
+        const mapX = Math.floor(worldX / 64);
+        const mapY = Math.floor(worldY / 64);
+        const map = this.mapManager.getMap(mapX, mapY) as EditorMapSquare | undefined;
+        if (!map) {
+            return undefined;
+        }
+        const lx = ((worldX % 64) + 64) % 64;
+        const ly = ((worldY % 64) + 64) % 64;
+        const sceneX = lx + map.borderSize;
+        const sceneY = ly + map.borderSize;
+        if (sceneX < 0 || sceneY < 0 || sceneX >= map.scene.sizeX || sceneY >= map.scene.sizeY) {
+            return undefined;
+        }
+        return map.scene.tileRenderFlags[level][sceneX][sceneY] ?? 0;
+    }
+
+    private drawTileFlagHighlight(
+        map: EditorMapSquare,
+        level: number,
+        lx: number,
+        ly: number,
+        color: readonly [number, number, number, number],
+    ): void {
+        this.highlightTileDrawCall.uniform("u_fillColor", [color[0], color[1], color[2], color[3]]);
+        this.highlightTileDrawCall.uniform("u_outlineColor", [color[0], color[1], color[2], Math.min(color[3] + 0.35, 1)]);
+        this.highlightTileDrawCall.uniform("u_outlineThickness", 0.06);
+        this.highlightTileDrawCall.uniform("u_level", level);
+        this.highlightTileDrawCall.uniform("u_mapX", map.mapX);
+        this.highlightTileDrawCall.uniform("u_mapY", map.mapY);
+        this.highlightTileDrawCall.texture("u_heightMap", map.heightMapTexture);
+        this.highlightTileDrawCall.uniform("u_edgeMask", [1, 1, 1, 1]);
+        this.highlightTileDrawCall.uniform("u_highlightShapeMode", 0);
+        this.highlightTileDrawCall.uniform("u_tileX", lx);
+        this.highlightTileDrawCall.uniform("u_tileY", ly);
+        this.highlightTileDrawCall.drawRanges(this.highlightFullTileRange);
+        this.highlightTileDrawCall.draw();
+    }
+
+    private renderVisibleTileFlagOverlays(): void {
+        const model = getTileFlagsToolModel(this.host);
+        if (model.showFlags.size === 0) {
+            return;
+        }
+
+        const level = this.host.selectedLevel;
+        this.app.disable(PicoGL.DEPTH_TEST);
+        this.app.disable(PicoGL.CULL_FACE);
+
+        for (let i = 0; i < this.mapManager.visibleMapCount; i++) {
+            const map = this.mapManager.visibleMaps[i];
+            const scene = map.scene;
+            for (let lx = 0; lx < 64; lx++) {
+                for (let ly = 0; ly < 64; ly++) {
+                    const sceneX = lx + map.borderSize;
+                    const sceneY = ly + map.borderSize;
+                    if (sceneX >= scene.sizeX || sceneY >= scene.sizeY) {
+                        continue;
+                    }
+                    const flagValue = scene.tileRenderFlags[level][sceneX][sceneY] ?? 0;
+                    if (flagValue === 0) {
+                        continue;
+                    }
+                    for (const descriptor of TILE_RENDER_FLAG_DESCRIPTORS) {
+                        if (!shouldShowTileRenderFlag(flagValue, descriptor.flag, model.showFlags)) {
+                            continue;
+                        }
+                        this.drawTileFlagHighlight(map, level, lx, ly, descriptor.color);
+                    }
+                }
+            }
+        }
+
+        this.app.enable(PicoGL.CULL_FACE);
+    }
+
+    private renderTileFlagsBrushPreview(): void {
+        if (this.hoverWorldX === -1 || this.hoverWorldY === -1) {
+            return;
+        }
+
+        const level = this.host.selectedLevel;
+        this.app.disable(PicoGL.DEPTH_TEST);
+        this.app.disable(PicoGL.CULL_FACE);
+
+        this.highlightTileDrawCall.uniform("u_fillColor", [
+            this.brushFill[0],
+            this.brushFill[1],
+            this.brushFill[2],
+            Math.min(this.brushFill[3], 0.28),
+        ]);
+        this.highlightTileDrawCall.uniform("u_outlineColor", [
+            this.brushOutlineColor[0],
+            this.brushOutlineColor[1],
+            this.brushOutlineColor[2],
+            this.brushOutlineColor[3],
+        ]);
+        this.highlightTileDrawCall.uniform("u_outlineThickness", this.brushOutlineThickness);
+        this.highlightTileDrawCall.uniform("u_level", level);
+
+        const hoveredTilesMap = new Map<number, number[]>();
+        this.forEachBrushOffset((dx, dy) => {
+            const worldX = this.hoverWorldX + dx;
+            const worldY = this.hoverWorldY + dy;
+            const mapX = Math.floor(worldX / 64);
+            const mapY = Math.floor(worldY / 64);
+            const lx = worldX - mapX * 64;
+            const ly = worldY - mapY * 64;
+            const tileId = (lx << 8) | ly;
+            const mapId = getMapSquareId(mapX, mapY);
+            const hoveredTiles = hoveredTilesMap.get(mapId);
+            if (hoveredTiles) {
+                hoveredTiles.push(tileId);
+            } else {
+                hoveredTilesMap.set(mapId, [tileId]);
+            }
+        });
+
+        for (let i = 0; i < this.mapManager.visibleMapCount; i++) {
+            const map = this.mapManager.visibleMaps[i];
+            const mapId = getMapSquareId(map.mapX, map.mapY);
+            const hoveredTiles = hoveredTilesMap.get(mapId);
+            if (!hoveredTiles) {
+                continue;
+            }
+            this.highlightTileDrawCall.uniform("u_mapX", map.mapX);
+            this.highlightTileDrawCall.uniform("u_mapY", map.mapY);
+            this.highlightTileDrawCall.texture("u_heightMap", map.heightMapTexture);
+            for (const tileId of hoveredTiles) {
+                const lx = tileId >> 8;
+                const ly = tileId & 0xff;
+                this.highlightTileDrawCall.uniform("u_edgeMask", [1, 1, 1, 1]);
+                this.highlightTileDrawCall.uniform("u_highlightShapeMode", 0);
+                this.highlightTileDrawCall.uniform("u_tileX", lx);
+                this.highlightTileDrawCall.uniform("u_tileY", ly);
+                this.highlightTileDrawCall.drawRanges(this.highlightFullTileRange);
+                this.highlightTileDrawCall.draw();
+            }
+        }
+
+        this.app.enable(PicoGL.CULL_FACE);
+    }
+
+    private updateTileFlagsHoverDebug(): void {
+        if (!this.isTileFlagsToolActive() || this.hoverWorldX === -1 || this.hoverWorldY === -1) {
+            this.host.debugText = undefined;
+            return;
+        }
+
+        const level = this.host.selectedLevel;
+        const flagValue = this.getTileRenderFlagAtWorld(level, this.hoverWorldX, this.hoverWorldY) ?? 0;
+        this.host.debugText = `Tile (${this.hoverWorldX}, ${this.hoverWorldY}) L${level} flags: ${formatTileRenderFlags(flagValue)} [${flagValue}]`;
     }
 
     private handleTerrainSmoothingToggle(): void {
@@ -686,17 +1040,23 @@ export class WebGLMapEditorRenderer extends MapEditorRenderer<EditorMapSquare> {
         this.app.enable(PicoGL.DEPTH_TEST);
         this.app.enable(PicoGL.BLEND);
 
-        const startLevel = 0;
-        const endLevel = 4;
+        const { startLevel, endLevel } = this.host.getVisiblePlaneRange();
 
         const terrainDrawRange = newDrawRange(
             startLevel * LEVEL_TILE_VERTICES,
             endLevel * LEVEL_TILE_VERTICES,
         );
 
+        const viewPlaneMax = this.host.viewPlaneMax;
+        const hideBelowViewPlane = this.host.hideBelowViewPlane ? 1 : 0;
+
         for (let i = 0; i < this.mapManager.visibleMapCount; i++) {
             const map = this.mapManager.visibleMaps[i];
 
+            map.terrainDrawCall
+                .uniform("u_viewPlaneMax", viewPlaneMax)
+                .uniform("u_hideBelowViewPlane", hideBelowViewPlane)
+                .uniform("u_planeClipEnabled", 1);
             map.terrainDrawCall.drawRanges(terrainDrawRange);
             map.terrainDrawCall.draw();
         }
@@ -729,22 +1089,24 @@ export class WebGLMapEditorRenderer extends MapEditorRenderer<EditorMapSquare> {
 
         for (let i = 0; i < this.mapManager.visibleMapCount; i++) {
             const map = this.mapManager.visibleMaps[i];
-            for (const loc of map.locsAnimated) {
-                const frameId = loc.frame;
-                const frame = loc.anim.frames[frameId | 0];
-                const index = loc.getDrawRangeIndex(false, false, false);
-                if (index !== -1) {
-                    map.objectDrawCall.offsets[index] = frame[0];
-                    (map.objectDrawCall as any).numElements[index] = frame[1];
-                    map.objectDrawRanges[index] = frame;
-                }
-                if (loc.anim.framesAlpha) {
-                    const alphaFrame = loc.anim.framesAlpha[frameId | 0];
-                    const alphaIndex = loc.getDrawRangeIndex(true, false, false);
-                    if (alphaIndex !== -1) {
-                        map.objectDrawCallAlpha.offsets[alphaIndex] = alphaFrame[0];
-                        (map.objectDrawCallAlpha as any).numElements[alphaIndex] = alphaFrame[1];
-                        map.objectDrawRangesAlpha[alphaIndex] = alphaFrame;
+            for (const chunk of map.objectChunks) {
+                for (const loc of chunk.locsAnimated) {
+                    const frameId = loc.frame;
+                    const frame = loc.anim.frames[frameId | 0];
+                    const index = loc.getDrawRangeIndex(false, false, false);
+                    if (index !== -1) {
+                        chunk.drawCall.offsets[index] = frame[0];
+                        (chunk.drawCall as any).numElements[index] = frame[1];
+                        chunk.objectDrawRanges[index] = frame;
+                    }
+                    if (loc.anim.framesAlpha) {
+                        const alphaFrame = loc.anim.framesAlpha[frameId | 0];
+                        const alphaIndex = loc.getDrawRangeIndex(true, false, false);
+                        if (alphaIndex !== -1) {
+                            chunk.drawCallAlpha.offsets[alphaIndex] = alphaFrame[0];
+                            (chunk.drawCallAlpha as any).numElements[alphaIndex] = alphaFrame[1];
+                            chunk.objectDrawRangesAlpha[alphaIndex] = alphaFrame;
+                        }
                     }
                 }
             }
@@ -753,19 +1115,40 @@ export class WebGLMapEditorRenderer extends MapEditorRenderer<EditorMapSquare> {
         if (this.host.objectsVisible) {
             for (let i = 0; i < this.mapManager.visibleMapCount; i++) {
                 const map = this.mapManager.visibleMaps[i];
-                if (map.objectDrawRanges.length > 0) {
-                    this.draw(map.objectDrawCall, map.objectDrawRanges);
+                for (const chunk of map.objectChunks) {
+                    chunk.drawCall
+                        .uniform("u_viewPlaneMax", viewPlaneMax)
+                        .uniform("u_hideBelowViewPlane", hideBelowViewPlane)
+                        .uniform("u_planeClipEnabled", 1);
+                    if (chunk.objectDrawRanges.length > 0) {
+                        this.draw(chunk.drawCall, chunk.objectDrawRanges);
+                    }
                 }
             }
             for (let i = this.mapManager.visibleMapCount - 1; i >= 0; i--) {
                 const map = this.mapManager.visibleMaps[i];
-                if (map.objectDrawRangesAlpha.length > 0) {
-                    this.draw(map.objectDrawCallAlpha, map.objectDrawRangesAlpha);
+                for (const chunk of map.objectChunks) {
+                    chunk.drawCallAlpha
+                        .uniform("u_viewPlaneMax", viewPlaneMax)
+                        .uniform("u_hideBelowViewPlane", hideBelowViewPlane)
+                        .uniform("u_planeClipEnabled", 1);
+                    if (chunk.objectDrawRangesAlpha.length > 0) {
+                        this.draw(chunk.drawCallAlpha, chunk.objectDrawRangesAlpha);
+                    }
                 }
             }
         }
 
-        if (this.hoverWorldX !== -1 && this.hoverWorldY !== -1) {
+        this.renderObjectSelectorWireframes();
+
+        if (this.host.isObjectSelectorToolActive() && this.hoverWorldX !== -1 && this.hoverWorldY !== -1) {
+            this.renderObjectSelectorTileHighlight();
+        } else if (this.isTileFlagsToolActive()) {
+            this.renderVisibleTileFlagOverlays();
+            if (this.hoverWorldX !== -1 && this.hoverWorldY !== -1) {
+                this.renderTileFlagsBrushPreview();
+            }
+        } else if (this.hoverWorldX !== -1 && this.hoverWorldY !== -1) {
             this.app.disable(PicoGL.DEPTH_TEST);
             this.app.disable(PicoGL.CULL_FACE);
             const level = this.host.selectedLevel;
@@ -903,6 +1286,218 @@ export class WebGLMapEditorRenderer extends MapEditorRenderer<EditorMapSquare> {
             a.brushOutline.outline[3],
         );
         this.brushOutlineThickness = clampThickness(a.brushOutline.outlineThickness);
+        vec4.set(
+            this.objectSelectorHoverColor,
+            a.objectSelector.hover[0],
+            a.objectSelector.hover[1],
+            a.objectSelector.hover[2],
+            a.objectSelector.hover[3],
+        );
+        vec4.set(
+            this.objectSelectorSelectedColor,
+            a.objectSelector.selected[0],
+            a.objectSelector.selected[1],
+            a.objectSelector.selected[2],
+            a.objectSelector.selected[3],
+        );
+    }
+
+    private lastMouseLeftDown = false;
+
+    private updateObjectSelectorState(): void {
+        if (!this.host.isObjectSelectorToolActive()) {
+            this.host.setHoveredObject(undefined);
+            this.lastMouseLeftDown = false;
+            return;
+        }
+
+        if (this.hoverWorldX === -1 || this.hoverWorldY === -1) {
+            this.host.setHoveredObject(undefined);
+        } else {
+            const mapX = Math.floor(this.hoverWorldX / 64);
+            const mapY = Math.floor(this.hoverWorldY / 64);
+            const mapId = getMapSquareId(mapX, mapY);
+            const map = this.mapManager.getMap(mapX, mapY) as EditorMapSquare | undefined;
+            const localX = ((this.hoverWorldX % 64) + 64) % 64;
+            const localY = ((this.hoverWorldY % 64) + 64) % 64;
+            const sceneX = map ? localX + map.borderSize : localX;
+            const sceneY = map ? localY + map.borderSize : localY;
+            const pickLevels =
+                map && sceneX >= 0 && sceneY >= 0 && sceneX < map.scene.sizeX && sceneY < map.scene.sizeY
+                    ? getObjectPickLevelsAt(
+                          map.scene,
+                          sceneX,
+                          sceneY,
+                          this.host.viewPlaneMax,
+                          this.host.hideBelowViewPlane,
+                      )
+                    : [this.host.getTilePickLevel()];
+            const visiblePickLevels = pickLevels.filter((pickLevel) =>
+                this.host.isPlaneVisible(pickLevel),
+            );
+            this.host.setHoveredObject(
+                findObjectAtHover(
+                    (mx, my) => this.mapManager.getMap(mx, my) as EditorMapSquare | undefined,
+                    mapId,
+                    mapX,
+                    mapY,
+                    visiblePickLevels.length > 0 ? visiblePickLevels : pickLevels,
+                    this.hoverWorldX,
+                    this.hoverWorldY,
+                    this.host.viewPlaneMax,
+                ),
+            );
+        }
+
+        const inputManager = this.host.inputManager;
+        const leftDown = inputManager.isKeyDown("MouseLeft");
+        if (this.lastMouseLeftDown && !leftDown && !inputManager.isHolding() && this.host.hoveredObject) {
+            this.host.setSelectedObject({ ...this.host.hoveredObject });
+        }
+        this.lastMouseLeftDown = leftDown;
+    }
+
+    private renderObjectSelectorWireframes(): void {
+        if (!this.host.isObjectSelectorToolActive()) {
+            return;
+        }
+        if (
+            !this.objectWireframeDrawCall ||
+            !this.objectWireframeVertexBuffer ||
+            !this.objectWireframeVertexArray
+        ) {
+            return;
+        }
+
+        this.app.disable(PicoGL.DEPTH_TEST);
+        this.app.enable(PicoGL.BLEND);
+        this.app.blendFunc(PicoGL.SRC_ALPHA, PicoGL.ONE_MINUS_SRC_ALPHA);
+
+        const hovered = this.host.hoveredObject;
+        const selected = this.host.selectedObject;
+        if (
+            hovered &&
+            !editorObjectRefKey(hovered, selected) &&
+            this.host.isPlaneVisible(hovered.level)
+        ) {
+            this.drawObjectWireframe(hovered, this.objectSelectorHoverColor);
+        }
+        if (selected && this.host.isPlaneVisible(selected.level)) {
+            this.drawObjectWireframe(selected, this.objectSelectorSelectedColor);
+        }
+
+        this.app.disable(PicoGL.BLEND);
+        this.app.enable(PicoGL.DEPTH_TEST);
+    }
+
+    private resolveWireframeModel(
+        locType: import("../../rs/config/loctype/LocType").LocType,
+        ref: EditorObjectRef,
+    ): WireframeModel | undefined {
+        const loaded = this.host.locModelLoader.getModel(
+            locType,
+            ref.locModelType as LocModelType,
+            ref.rotation,
+        );
+        if (loaded instanceof Model || loaded instanceof ModelData) {
+            return loaded;
+        }
+        return undefined;
+    }
+
+    private drawObjectWireframe(ref: EditorObjectRef, color: vec4): void {
+        const locType = this.host.locTypeLoader.load(ref.locTypeId);
+        const model = this.resolveWireframeModel(locType, ref);
+        if (!model) {
+            return;
+        }
+
+        const cacheKey = `${ref.locTypeId}:${ref.locModelType}:${ref.rotation}`;
+        let lines = this.wireframeLineCache.get(cacheKey);
+        if (!lines) {
+            lines = buildModelWireframeLines(model);
+            this.wireframeLineCache.set(cacheKey, lines);
+        }
+        if (lines.length === 0) {
+            return;
+        }
+
+        const map = this.mapManager.getMap(ref.mapX, ref.mapY) as EditorMapSquare | undefined;
+        if (!map) {
+            return;
+        }
+
+        const borderOffset = map.borderSize * -128;
+        const groundY = map.scene.getHeightInterpolated(ref.level, ref.sceneX, ref.sceneZ);
+
+        const vertexCount = lines.length / 3;
+        if (vertexCount === 0) {
+            return;
+        }
+
+        this.objectWireframeVertexBuffer!.restore(lines);
+        this.objectWireframeDrawCall!
+            .drawRanges(newDrawRange(0, vertexCount))
+            .uniform("u_modelOffset", [
+                ref.sceneX + borderOffset,
+                -ref.sceneY - groundY,
+                ref.sceneZ + borderOffset,
+            ])
+            .uniform("u_mapPos", [ref.mapX, ref.mapY])
+            .uniform("u_color", color as unknown as number[])
+            .draw();
+    }
+
+    private applyObjectSelectorHighlightUniforms(): void {
+        const hover = this.objectSelectorHoverColor;
+        this.highlightTileDrawCall.uniform("u_fillColor", [
+            hover[0],
+            hover[1],
+            hover[2],
+            Math.min(hover[3], 0.35),
+        ]);
+        this.highlightTileDrawCall.uniform("u_outlineColor", [
+            hover[0],
+            hover[1],
+            hover[2],
+            1,
+        ]);
+        this.highlightTileDrawCall.uniform("u_outlineThickness", 0.08);
+    }
+
+    private renderObjectSelectorTileHighlight(): void {
+        if (this.hoverWorldX === -1 || this.hoverWorldY === -1) {
+            return;
+        }
+
+        const mapX = Math.floor(this.hoverWorldX / 64);
+        const mapY = Math.floor(this.hoverWorldY / 64);
+        const map = this.mapManager.getMap(mapX, mapY) as EditorMapSquare | undefined;
+        if (!map) {
+            return;
+        }
+
+        const lx = ((this.hoverWorldX % 64) + 64) % 64;
+        const ly = ((this.hoverWorldY % 64) + 64) % 64;
+        const level = this.host.hoveredObject?.level ?? this.host.getTilePickLevel();
+
+        this.app.disable(PicoGL.DEPTH_TEST);
+        this.app.disable(PicoGL.CULL_FACE);
+
+        this.applyObjectSelectorHighlightUniforms();
+        this.highlightTileDrawCall.uniform("u_level", level);
+        this.highlightTileDrawCall.uniform("u_mapX", map.mapX);
+        this.highlightTileDrawCall.uniform("u_mapY", map.mapY);
+        this.highlightTileDrawCall.texture("u_heightMap", map.heightMapTexture);
+        this.highlightTileDrawCall.uniform("u_edgeMask", [1, 1, 1, 1]);
+        this.highlightTileDrawCall.uniform("u_highlightShapeMode", 0);
+        this.highlightTileDrawCall.uniform("u_tileX", lx);
+        this.highlightTileDrawCall.uniform("u_tileY", ly);
+        this.highlightTileDrawCall.drawRanges(this.highlightFullTileRange);
+        this.highlightTileDrawCall.draw();
+
+        this.app.enable(PicoGL.DEPTH_TEST);
+        this.app.enable(PicoGL.CULL_FACE);
     }
 
     private applyBrushHighlightUniforms(): void {
@@ -950,6 +1545,20 @@ export class WebGLMapEditorRenderer extends MapEditorRenderer<EditorMapSquare> {
                 ],
                 outlineThickness: this.brushOutlineThickness,
             },
+            objectSelector: {
+                hover: [
+                    this.objectSelectorHoverColor[0],
+                    this.objectSelectorHoverColor[1],
+                    this.objectSelectorHoverColor[2],
+                    this.objectSelectorHoverColor[3],
+                ],
+                selected: [
+                    this.objectSelectorSelectedColor[0],
+                    this.objectSelectorSelectedColor[1],
+                    this.objectSelectorSelectedColor[2],
+                    this.objectSelectorSelectedColor[3],
+                ],
+            },
         };
     }
 
@@ -962,6 +1571,10 @@ export class WebGLMapEditorRenderer extends MapEditorRenderer<EditorMapSquare> {
             brushOutline: {
                 ...cur.brushOutline,
                 ...(partial.brushOutline ?? {}),
+            },
+            objectSelector: {
+                ...cur.objectSelector,
+                ...(partial.objectSelector ?? {}),
             },
         };
         this.applyGizmoAppearance(next);
@@ -1093,7 +1706,7 @@ export class WebGLMapEditorRenderer extends MapEditorRenderer<EditorMapSquare> {
         // this.app.disable(PicoGL.CULL_FACE);
         this.app.disable(PicoGL.BLEND);
 
-        this.tilePickingDrawCall.uniform("u_level", this.host.selectedLevel);
+        this.tilePickingDrawCall.uniform("u_level", this.host.getTilePickLevel());
 
         for (let i = 0; i < this.mapManager.visibleMapCount; i++) {
             const map = this.mapManager.visibleMaps[i];
@@ -1278,9 +1891,19 @@ export class WebGLMapEditorRenderer extends MapEditorRenderer<EditorMapSquare> {
         if (!this.host.isEditorToolPluginEnabled(this.host.editorTool)) {
             return;
         }
+        if (this.host.editorTool === "object-selector") {
+            return;
+        }
         const inputManager = this.host.inputManager;
+        this.syncTileFlagsPaintStroke();
 
-        if (this.hoverWorldX === -1 || this.hoverWorldY === -1 || !inputManager.isHolding()) {
+        const isPainting = this.isTileFlagsToolActive()
+            ? inputManager.isKeyDown("MouseLeft")
+            : inputManager.isHolding();
+
+        this.syncPaintHistoryStroke(isPainting);
+
+        if (this.hoverWorldX === -1 || this.hoverWorldY === -1 || !isPainting) {
             return;
         }
 
@@ -1384,6 +2007,14 @@ export class WebGLMapEditorRenderer extends MapEditorRenderer<EditorMapSquare> {
             case "smooth":
                 applyHeightToolRuntime(this, hoveredTilesMap);
                 break;
+            case "tile-flags":
+                applyTileRenderFlagsRuntime(
+                    this,
+                    hoveredTilesMap,
+                    this.tileFlagsPaintedKeys,
+                    inputManager.isControlDown(),
+                );
+                break;
         }
 
         this.updateAffectedTiles();
@@ -1406,6 +2037,22 @@ export class WebGLMapEditorRenderer extends MapEditorRenderer<EditorMapSquare> {
             affectedTiles.add(tileId);
         } else {
             this.affectedTilesMap.set(mapId, new Set([tileId]));
+        }
+    }
+
+    addHeightChangedTile(worldX: number, worldY: number): void {
+        const mapX = Math.floor(worldX / 64);
+        const mapY = Math.floor(worldY / 64);
+        const tileX = worldX % 64;
+        const tileY = worldY % 64;
+        const mapId = getMapSquareId(mapX, mapY);
+        const tileId = (tileX << 8) | tileY;
+
+        const changedTiles = this.heightChangedTilesMap.get(mapId);
+        if (changedTiles) {
+            changedTiles.add(tileId);
+        } else {
+            this.heightChangedTilesMap.set(mapId, new Set([tileId]));
         }
     }
 
@@ -1433,7 +2080,9 @@ export class WebGLMapEditorRenderer extends MapEditorRenderer<EditorMapSquare> {
                 const worldX = map.mapX * 64 + tileX;
                 const worldY = map.mapY * 64 + tileY;
                 const paintId = this.host.getUnderlayPaintTypeId(worldX, worldY);
-                scene.tileUnderlays[level][sceneX][sceneY] = paintId + 1;
+                recordHistoryTileMutation(this.host, map, level, sceneX, sceneY, () => {
+                    scene.tileUnderlays[level][sceneX][sceneY] = paintId + 1;
+                });
 
                 map.underlayUpdated = true;
 
@@ -1502,12 +2151,13 @@ export class WebGLMapEditorRenderer extends MapEditorRenderer<EditorMapSquare> {
                     continue;
                 }
 
-                scene.tileOverlays[level][sceneX][sceneY] = overlayValue;
-
-                if (overlayValue === 0) {
-                    scene.tileShapes[level][sceneX][sceneY] = 0;
-                    scene.tileRotations[level][sceneX][sceneY] = 0;
-                }
+                recordHistoryTileMutation(this.host, map, level, sceneX, sceneY, () => {
+                    scene.tileOverlays[level][sceneX][sceneY] = overlayValue;
+                    if (overlayValue === 0) {
+                        scene.tileShapes[level][sceneX][sceneY] = 0;
+                        scene.tileRotations[level][sceneX][sceneY] = 0;
+                    }
+                });
 
                 map.overlayUpdated = true;
 
@@ -1534,7 +2184,7 @@ export class WebGLMapEditorRenderer extends MapEditorRenderer<EditorMapSquare> {
         const overlayValue = this.host.getOverlayPaintTypeId(wx, wy) + 1;
         const mapX = Math.floor(wx / 64);
         const mapY = Math.floor(wy / 64);
-        const map = this.mapManager.getMapById(getMapSquareId(mapX, mapY));
+        const map = this.mapManager.getMapById(getMapSquareId(mapX, mapY)) as EditorMapSquare | undefined;
         if (!map) {
             return;
         }
@@ -1547,12 +2197,13 @@ export class WebGLMapEditorRenderer extends MapEditorRenderer<EditorMapSquare> {
             return;
         }
 
-        scene.tileOverlays[level][sceneX][sceneY] = overlayValue;
-
-        if (overlayValue === 0) {
-            scene.tileShapes[level][sceneX][sceneY] = 0;
-            scene.tileRotations[level][sceneX][sceneY] = 0;
-        }
+        recordHistoryTileMutation(this.host, map, level, sceneX, sceneY, () => {
+            scene.tileOverlays[level][sceneX][sceneY] = overlayValue;
+            if (overlayValue === 0) {
+                scene.tileShapes[level][sceneX][sceneY] = 0;
+                scene.tileRotations[level][sceneX][sceneY] = 0;
+            }
+        });
 
         map.overlayUpdated = true;
 
@@ -1586,19 +2237,31 @@ export class WebGLMapEditorRenderer extends MapEditorRenderer<EditorMapSquare> {
             }
 
             const scene = map.scene;
+            const rebuildStartLevel = map.heightRebuildMinLevel ?? selectedLevel;
 
-            let endLevel = selectedLevel + 1;
+            let endLevel = rebuildStartLevel + 1;
 
             if (map.heightUpdated) {
                 map.heightMapTextureData = loadHeightMapTextureData(scene);
                 map.updateHeightMapTexture(this.app);
 
-                for (let level = selectedLevel; level < scene.levels; level++) {
+                for (let level = rebuildStartLevel; level < scene.levels; level++) {
                     scene.calculateTileLights(level, true);
                 }
                 endLevel = scene.levels;
 
+                const heightChangedTiles = this.heightChangedTilesMap.get(mapId);
+                if (heightChangedTiles && heightChangedTiles.size > 0) {
+                    const chunkIds = syncSceneLocHeightsForHeightEdit(
+                        map,
+                        rebuildStartLevel,
+                        heightChangedTiles,
+                    );
+                    markObjectChunksForHeightEdit(map, chunkIds);
+                }
+
                 map.heightUpdated = false;
+                map.heightRebuildMinLevel = undefined;
             }
 
             if (map.underlayUpdated) {
@@ -1609,6 +2272,11 @@ export class WebGLMapEditorRenderer extends MapEditorRenderer<EditorMapSquare> {
 
             if (map.overlayUpdated) {
                 map.overlayUpdated = false;
+            }
+
+            if (map.tileRenderFlagsUpdated) {
+                map.updateTileRenderFlagsTexture(this.app);
+                map.tileRenderFlagsUpdated = false;
             }
 
             const heights = scene.tileHeights;
@@ -1627,7 +2295,7 @@ export class WebGLMapEditorRenderer extends MapEditorRenderer<EditorMapSquare> {
                     continue;
                 }
 
-                for (let level = selectedLevel; level < endLevel; level++) {
+                for (let level = rebuildStartLevel; level < endLevel; level++) {
                     const lights = scene.tileLights[level];
                     const blendedColors = scene.tileBlendedColors[level];
 
@@ -1684,6 +2352,7 @@ export class WebGLMapEditorRenderer extends MapEditorRenderer<EditorMapSquare> {
         }
 
         this.affectedTilesMap.clear();
+        this.heightChangedTilesMap.clear();
     }
 
     clearMaps(): void {

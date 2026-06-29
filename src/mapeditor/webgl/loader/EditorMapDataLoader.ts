@@ -18,16 +18,23 @@ import {
 import { LocAnimatedGroup } from "../../../mapviewer/webgl/loc/LocAnimatedGroup";
 import { LocAnimatedData } from "../../../mapviewer/webgl/loc/LocAnimatedData";
 import type { SceneLocEntity } from "../../../mapviewer/webgl/loc/SceneLocEntity";
-import { getSceneLocs, isLowDetail } from "../../../mapviewer/webgl/loc/SceneLocs";
+import { getSceneLocsForChunk, isLowDetail } from "../../../mapviewer/webgl/loc/SceneLocs";
 import { LocType } from "../../../rs/config/loctype/LocType";
 import { LocEntity } from "../../../rs/scene/entity/LocEntity";
 import { Scene, applyHeightMapTextureData, loadHeightMapTextureData } from "../../../rs/scene/Scene";
-import { LocLoadType } from "../../../rs/scene/SceneBuilder";
+import { LocLoadType, SceneBuilder } from "../../../rs/scene/SceneBuilder";
 import { SceneTile } from "../../../rs/scene/SceneTile";
 import type { WorkerState } from "../../../mapviewer/worker/RenderDataWorker";
+import { OBJECT_CHUNK_COUNT } from "../objectChunk";
+import { applySceneLocData, serializeSceneLocData } from "../sceneLocData";
 import { LEVEL_TILE_VERTICES, TerrainVertexBuffer, getTileOffset } from "../buffer/TerrainVertexBuffer";
-import { EditorMapData } from "./EditorMapData";
+import { EditorMapData, type SceneData } from "./EditorMapData";
+import {
+    EditorMapObjectChunkData,
+    EditorMapObjectRebuildInput,
+} from "./EditorMapObjectChunkData";
 import { EditorMapTerrainData } from "./EditorMapTerrainData";
+import type { SceneLocData } from "../sceneLocData";
 
 const modelHashBuf = new ModelHashBuffer(5000);
 
@@ -71,40 +78,15 @@ export function loadEditorMapData(
         3,
     );
 
-    const objectSceneBuf = new SceneBuffer(workerState.textureLoader, textureIndexMap, 100000);
-    const sceneLocs = getSceneLocs(workerState.locTypeLoader, scene, borderSize, 3);
-    const sceneModels = sceneLocs.locs;
-    const locAnimatedGroups = addLocEntities(
-        workerState,
-        scene,
-        workerState.sceneBuilder.centerLocHeightWithSize,
-        sceneModels,
-        objectSceneBuf,
-        sceneLocs.locEntities,
-    );
-    addSceneModels(objectSceneBuf, sceneModels);
-    const locsAnimated = objectSceneBuf.addLocAnimatedGroups(locAnimatedGroups);
-
-    const objectVertices = objectSceneBuf.vertexBuf.byteArray();
-    const objectIndices = new Int32Array(objectSceneBuf.indices);
-    const objectModelTextureData = createModelInfoTextureData(objectSceneBuf.drawCommands);
-    const objectModelTextureDataAlpha = createModelInfoTextureData(objectSceneBuf.drawCommandsAlpha);
-    const objectDrawRanges = objectSceneBuf.drawCommands.map((cmd) =>
-        newDrawRange(cmd.offset, cmd.elements, cmd.instances.length),
-    );
-    const objectDrawRangesAlpha = objectSceneBuf.drawCommandsAlpha.map((cmd) =>
-        newDrawRange(cmd.offset, cmd.elements, cmd.instances.length),
-    );
+    const sceneLocData = serializeSceneLocData(scene, borderSize);
+    const objectChunks = buildAllObjectChunks(workerState, textureIndexMap, scene, borderSize);
 
     const heightMapTextureData = loadHeightMapTextureData(scene);
 
     const transferables: Transferable[] = [
         terrainVertexBuffer.bytes.buffer,
-        objectVertices.buffer,
-        objectIndices.buffer,
-        objectModelTextureData.buffer,
-        objectModelTextureDataAlpha.buffer,
         heightMapTextureData.buffer,
+        ...collectObjectChunkTransferables(objectChunks),
         ...scene.tileHeights.flat().map((a) => a.buffer),
         ...scene.tileRenderFlags.flat().map((a) => a.buffer),
         ...scene.tileUnderlays.flat().map((a) => a.buffer),
@@ -142,18 +124,140 @@ export function loadEditorMapData(
 
             terrainVertices: terrainVertexBuffer.bytes,
             terrainDrawRanges,
-            objectVertices,
-            objectIndices,
-            objectModelTextureData,
-            objectModelTextureDataAlpha,
-            objectDrawRanges,
-            objectDrawRangesAlpha,
-            locsAnimated,
+            sceneLocData,
+            objectChunks,
 
             heightMapTextureData,
         },
         transferables,
     );
+}
+
+export function loadEditorMapObjectData(
+    workerState: WorkerState,
+    input: EditorMapObjectRebuildInput,
+    smoothUnderlays: boolean,
+): TransferDescriptor<EditorMapObjectChunkData[]> {
+    const textureLoader = workerState.textureLoader;
+    const textureIds = textureLoader.getTextureIds().filter((id) => textureLoader.isSd(id));
+    const textureIndexMap = new Map<number, number>();
+    for (let i = 0; i < textureIds.length; i++) {
+        textureIndexMap.set(textureIds[i], i);
+    }
+
+    const scene = buildEditorSceneFromData(
+        input.scene,
+        input.sceneLocData,
+        workerState.sceneBuilder,
+        smoothUnderlays,
+    );
+
+    const chunks: EditorMapObjectChunkData[] = [];
+    for (const chunkId of input.chunkIds) {
+        chunks.push(
+            buildObjectChunkMesh(workerState, textureIndexMap, scene, input.borderSize, chunkId),
+        );
+    }
+
+    return Transfer(chunks, collectObjectChunkTransferables(chunks));
+}
+
+function buildEditorSceneFromData(
+    sceneData: SceneData,
+    sceneLocData: SceneLocData,
+    sceneBuilder: SceneBuilder,
+    smoothUnderlays: boolean,
+): Scene {
+    const scene = new Scene(sceneData.levels, sceneData.sizeX, sceneData.sizeY);
+    scene.tileHeights = sceneData.tileHeights;
+    scene.tileRenderFlags = sceneData.tileRenderFlags;
+    scene.tileUnderlays = sceneData.tileUnderlays;
+    scene.tileOverlays = sceneData.tileOverlays;
+    scene.tileShapes = sceneData.tileShapes;
+    scene.tileRotations = sceneData.tileRotations;
+    scene.tileLightOcclusions = sceneData.tileLightOcclusions;
+    scene.tileLights = sceneData.tileLights;
+    scene.tileBlendedColors = sceneData.tileBlendedColors;
+    applySceneLocData(scene, sceneLocData);
+    sceneBuilder.addTileModels(scene, smoothUnderlays);
+    scene.setTileMinLevels();
+    return scene;
+}
+
+function buildAllObjectChunks(
+    workerState: WorkerState,
+    textureIndexMap: Map<number, number>,
+    scene: Scene,
+    borderSize: number,
+): EditorMapObjectChunkData[] {
+    const chunks: EditorMapObjectChunkData[] = [];
+    for (let chunkId = 0; chunkId < OBJECT_CHUNK_COUNT; chunkId++) {
+        chunks.push(buildObjectChunkMesh(workerState, textureIndexMap, scene, borderSize, chunkId));
+    }
+    return chunks;
+}
+
+function buildObjectChunkMesh(
+    workerState: WorkerState,
+    textureIndexMap: Map<number, number>,
+    scene: Scene,
+    borderSize: number,
+    chunkId: number,
+): EditorMapObjectChunkData {
+    const objectSceneBuf = new SceneBuffer(workerState.textureLoader, textureIndexMap, 100000);
+    const sceneLocs = getSceneLocsForChunk(
+        workerState.locTypeLoader,
+        scene,
+        borderSize,
+        3,
+        chunkId,
+    );
+    const sceneModels = sceneLocs.locs;
+    const locAnimatedGroups = addLocEntities(
+        workerState,
+        scene,
+        workerState.sceneBuilder.centerLocHeightWithSize,
+        sceneModels,
+        objectSceneBuf,
+        sceneLocs.locEntities,
+    );
+    addSceneModels(objectSceneBuf, sceneModels);
+    const locsAnimated = objectSceneBuf.addLocAnimatedGroups(locAnimatedGroups);
+
+    const objectVertices = objectSceneBuf.vertexBuf.byteArray();
+    const objectIndices = new Int32Array(objectSceneBuf.indices);
+    const objectModelTextureData = createModelInfoTextureData(objectSceneBuf.drawCommands);
+    const objectModelTextureDataAlpha = createModelInfoTextureData(objectSceneBuf.drawCommandsAlpha);
+    const objectDrawRanges = objectSceneBuf.drawCommands.map((cmd) =>
+        newDrawRange(cmd.offset, cmd.elements, cmd.instances.length),
+    );
+    const objectDrawRangesAlpha = objectSceneBuf.drawCommandsAlpha.map((cmd) =>
+        newDrawRange(cmd.offset, cmd.elements, cmd.instances.length),
+    );
+
+    return {
+        chunkId,
+        objectVertices,
+        objectIndices,
+        objectModelTextureData,
+        objectModelTextureDataAlpha,
+        objectDrawRanges,
+        objectDrawRangesAlpha,
+        locsAnimated,
+    };
+}
+
+function collectObjectChunkTransferables(chunks: EditorMapObjectChunkData[]): Transferable[] {
+    const transferables: Transferable[] = [];
+    for (const chunk of chunks) {
+        transferables.push(
+            chunk.objectVertices.buffer,
+            chunk.objectIndices.buffer,
+            chunk.objectModelTextureData.buffer,
+            chunk.objectModelTextureDataAlpha.buffer,
+        );
+    }
+    return transferables;
 }
 
 function collectSceneLocDecodeStats(
@@ -507,7 +611,7 @@ function addLocEntities(
         sceneModels.push({
             ...sceneLocEntity,
             model,
-            sceneHeight: centerHeight,
+            sceneHeight: sceneLocEntity.sceneLoc.height,
             lowDetail,
             forceMerge: locType.contourGroundType > 1,
             interactId: locType.id,
@@ -593,7 +697,11 @@ export function addTerrain(
         for (let x = startX; x < endX; x++) {
             for (let y = startY; y < endY; y++) {
                 const tile = scene.tiles[level][x][y];
-                if (!tile || tile.minLevel > maxLevel) {
+                if (
+                    !tile ||
+                    (tile.minLevel > maxLevel &&
+                        !scene.isPlayerLevel(level, x, y, maxLevel))
+                ) {
                     continue;
                 }
                 const realX = x - borderSize;

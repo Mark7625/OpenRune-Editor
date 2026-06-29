@@ -21,6 +21,7 @@ import { MapFileIndex, getMapSquareId } from "../rs/map/MapFileIndex";
 import { MapManager } from "../mapviewer/MapManager";
 import { ModelLoader } from "../rs/model/ModelLoader";
 import { SeqFrameLoader } from "../rs/model/seq/SeqFrameLoader";
+import { Scene } from "../rs/scene/Scene";
 import { SceneBuilder } from "../rs/scene/SceneBuilder";
 import { TextureLoader } from "../rs/texture/TextureLoader";
 import {
@@ -41,6 +42,19 @@ import {
     getBuiltinEditorToolPlugin,
 } from "./plugins/builtins/current-plugin-layout.builtin";
 import { bootstrapHeightToolModel, getHeightToolWorkbenchSnapshot } from "./plugins/builtins/height-tool-model";
+import {
+    bootstrapEditorBottomBarModel,
+    getEditorBottomBarWorkbenchSnapshot,
+} from "./plugins/builtins/editor-bottom-bar-model";
+import { getMapEditorPanelDisplaySnapshot } from "./map-editor-panel-display";
+import {
+    bootstrapPaintToolsStripModel,
+    getPaintToolsStripWorkbenchSnapshot,
+} from "./plugins/builtins/paint-tools-strip-model";
+import {
+    bootstrapTileFlagsToolModel,
+    getTileFlagsToolWorkbenchSnapshot,
+} from "./plugins/builtins/tile-flags-tool-model";
 import { bootstrapUnderlayGradient, getUnderlayGradientWorkbenchSnapshot } from "./plugins/builtins/underlay-gradient-model";
 import { bootstrapOverlayGradient, getOverlayGradientWorkbenchSnapshot } from "./plugins/builtins/overlay-gradient-model";
 import type { EditorToolKeyChord } from "./plugins/builtins/builtin-plugin-types";
@@ -54,6 +68,17 @@ import type { MapEditorWorkbenchUiPluginId } from "./map-editor-workbench-layout
 import type { EditorMapSquare } from "./webgl/EditorMapSquare";
 import { WebGLMapEditorRenderer } from "./webgl/WebGLMapEditorRenderer";
 import type { MapEditorBrushType, MapEditorTool } from "./map-editor-kinds";
+import {
+    MapEditHistory,
+    type MapEditorHistorySnapshot,
+    type MapEditorHistoryTool,
+    type TileFieldSnapshot,
+} from "./map-editor-history";
+import {
+    applyHistoryRedo,
+    applyHistoryUndo,
+} from "./map-editor-history-apply";
+import { recordHistoryTileMutation } from "./map-editor-history-record";
 
 export type { MapEditorBrushType, MapEditorTool } from "./map-editor-kinds";
 export type { UnderlayGradientPattern, UnderlayPanelTab } from "./map-editor-underlay-gradient";
@@ -183,6 +208,12 @@ export class MapEditor {
 
     selectedLevel: number = 0;
 
+    /** Viewport plane filter: show planes up to this level (0–3) unless {@link hideBelowViewPlane}. */
+    viewPlaneMax: number = 0;
+
+    /** When true, hide planes below {@link viewPlaneMax}. */
+    hideBelowViewPlane: boolean = false;
+
     selectedUnderlayId: number = 0;
 
     /** Overlay floor id; **-1** = clear overlay (stored as **0** in scene). */
@@ -207,6 +238,8 @@ export class MapEditor {
     private enabledBrushShapePlugins = new Set<MapEditorBrushType>(BUILTIN_BRUSH_TYPE_PLUGINS.map((p) => p.id));
 
     private workbenchStateListeners = new Set<() => void>();
+    private historyListeners = new Set<() => void>();
+    readonly mapEditHistory = new MapEditHistory();
 
     /** Last known dock `addPanel` options when a plugin panel was closed (for layout restore). */
     private dockPanelRestoreById = new Map<string, AddPanelOptions>();
@@ -223,6 +256,8 @@ export class MapEditor {
     paintMouseButton: "left" | "right" = "right";
     /** Whether world objects (locs) are visible in editor viewport. */
     objectsVisible: boolean = true;
+    hoveredObject?: import("./webgl/sceneLocPicker").EditorObjectRef;
+    selectedObject?: import("./webgl/sceneLocPicker").EditorObjectRef;
     /** Whether terrain shading uses underlay smoothing/blending across neighbors. */
     terrainSmoothingEnabled: boolean = false;
 
@@ -296,10 +331,25 @@ export class MapEditor {
         if (this.editorTool === tool) {
             return;
         }
+        if (this.editorTool === "object-selector" && tool !== "object-selector") {
+            this.clearSelectedObject();
+        }
         this.editorTool = tool;
         for (const listener of this.editorToolListeners) {
             listener();
         }
+    }
+
+    isObjectSelectorToolActive(): boolean {
+        return this.editorTool === "object-selector" && this.isEditorToolPluginEnabled("object-selector");
+    }
+
+    /** Plane used for tile picking (hover cursor); follows the viewport plane filter in object selector mode. */
+    getTilePickLevel(): number {
+        if (this.isObjectSelectorToolActive()) {
+            return Math.max(0, Math.min(Scene.MAX_LEVELS - 1, this.viewPlaneMax | 0));
+        }
+        return this.selectedLevel;
     }
 
     subscribeEditorTool = (listener: () => void): (() => void) => {
@@ -415,6 +465,9 @@ export class MapEditor {
             return true;
         }
         this.enabledEditorToolPlugins.delete(tool);
+        if (tool === "object-selector") {
+            this.clearSelectedObject();
+        }
         if (this.editorTool === tool) {
             const fallback = BUILTIN_EDITOR_TOOL_PLUGINS.find((p) => this.enabledEditorToolPlugins.has(p.id))?.id;
             if (fallback) {
@@ -475,6 +528,81 @@ export class MapEditor {
         };
     };
 
+    subscribeHistory = (listener: () => void): (() => void) => {
+        this.historyListeners.add(listener);
+        return () => {
+            this.historyListeners.delete(listener);
+        };
+    };
+
+    private notifyHistoryChanged(): void {
+        for (const listener of this.historyListeners) {
+            listener();
+        }
+    }
+
+    getHistorySnapshot = (): MapEditorHistorySnapshot => {
+        return this.mapEditHistory.getSnapshot();
+    };
+
+    beginHistoryStroke = (tool: MapEditorHistoryTool, label?: string): void => {
+        this.mapEditHistory.beginStroke(tool, label);
+    };
+
+    commitHistoryStroke = (): void => {
+        this.mapEditHistory.commitStroke();
+        this.notifyHistoryChanged();
+    };
+
+    recordHistoryTileChange = (
+        mapId: number,
+        level: number,
+        localTileId: number,
+        before: TileFieldSnapshot,
+        after: TileFieldSnapshot,
+    ): void => {
+        this.mapEditHistory.recordTileChange(mapId, level, localTileId, before, after);
+    };
+
+    isHistoryApplying = (): boolean => {
+        return this.mapEditHistory.applying;
+    };
+
+    undoHistory = (): void => {
+        if (!(this.renderer instanceof WebGLMapEditorRenderer)) {
+            return;
+        }
+        const entry = this.mapEditHistory.getUndoEntry();
+        if (!entry) {
+            return;
+        }
+        this.mapEditHistory.applying = true;
+        applyHistoryUndo(this.renderer, entry);
+        this.mapEditHistory.applying = false;
+        this.mapEditHistory.markUndone();
+        this.notifyHistoryChanged();
+    };
+
+    redoHistory = (): void => {
+        if (!(this.renderer instanceof WebGLMapEditorRenderer)) {
+            return;
+        }
+        const entry = this.mapEditHistory.getRedoEntry();
+        if (!entry) {
+            return;
+        }
+        this.mapEditHistory.applying = true;
+        applyHistoryRedo(this.renderer, entry);
+        this.mapEditHistory.applying = false;
+        this.mapEditHistory.markRedone();
+        this.notifyHistoryChanged();
+    };
+
+    clearHistory = (): void => {
+        this.mapEditHistory.clear();
+        this.notifyHistoryChanged();
+    };
+
     /** For `useSyncExternalStore` (paint tools, workbench UI, brush shapes, keybind overrides). */
     getWorkbenchPluginsStateSnapshot = (): string => {
         const tools = BUILTIN_EDITOR_TOOL_PLUGINS.map((p) => (this.enabledEditorToolPlugins.has(p.id) ? "1" : "0")).join(
@@ -491,6 +619,10 @@ export class MapEditor {
         const viewer = JSON.stringify(this.viewerControlSettings);
         const heightStep = this.heightAdjustStep.toString();
         const heightWorkbench = getHeightToolWorkbenchSnapshot(this.pluginHost);
+        const paintToolsStripWorkbench = getPaintToolsStripWorkbenchSnapshot(this.pluginHost);
+        const bottomBarWorkbench = getEditorBottomBarWorkbenchSnapshot(this.pluginHost);
+        const panelDisplayWorkbench = getMapEditorPanelDisplaySnapshot(this.pluginHost);
+        const tileFlagsWorkbench = getTileFlagsToolWorkbenchSnapshot(this.pluginHost);
         const underlayWorkbench = getUnderlayGradientWorkbenchSnapshot(this.pluginHost);
         const overlayWorkbench = getOverlayGradientWorkbenchSnapshot(this.pluginHost);
         const objectVisibility = this.objectsVisible ? "1" : "0";
@@ -500,7 +632,11 @@ export class MapEditor {
             bounds: this.sandboxBounds ?? null,
             settings: this.sandboxTerrainSettings,
         });
-        return `${tools}|${ui}|${brush}|${keybinds}|${viewer}|${heightStep}|${heightWorkbench}|${underlayWorkbench}|${overlayWorkbench}|${objectVisibility}|${terrainSmoothing}|${sandbox}`;
+        const objectSelector = JSON.stringify({
+            hovered: this.hoveredObject ?? null,
+            selected: this.selectedObject ?? null,
+        });
+        return `${tools}|${ui}|${brush}|${keybinds}|${viewer}|${heightStep}|${heightWorkbench}|${paintToolsStripWorkbench}|${bottomBarWorkbench}|${panelDisplayWorkbench}|${tileFlagsWorkbench}|${underlayWorkbench}|${overlayWorkbench}|${objectVisibility}|${terrainSmoothing}|${sandbox}|${objectSelector}`;
     };
 
     saveDockPanelRestore(panelId: string, options: AddPanelOptions): void {
@@ -626,6 +762,33 @@ export class MapEditor {
         }
     }
 
+    /** Whether a scene plane should be drawn given the viewport plane filter. */
+    isPlaneVisible(level: number): boolean {
+        const plane = Math.max(0, Math.min(Scene.MAX_LEVELS - 1, level | 0));
+        const max = Math.max(0, Math.min(Scene.MAX_LEVELS - 1, this.viewPlaneMax | 0));
+        if (this.hideBelowViewPlane) {
+            return plane >= max;
+        }
+        if (plane <= max) {
+            return true;
+        }
+        // Bridge tiles on the plane above the view max can still be visible.
+        return plane === max + 1 && max < Scene.MAX_LEVELS - 1;
+    }
+
+    getVisiblePlaneRange(): { startLevel: number; endLevel: number } {
+        const max = Math.max(0, Math.min(Scene.MAX_LEVELS - 1, this.viewPlaneMax | 0));
+        if (this.hideBelowViewPlane) {
+            return { startLevel: max, endLevel: Scene.MAX_LEVELS };
+        }
+        // Include one extra plane so bridge tiles can be clipped per-tile in the shader.
+        return { startLevel: 0, endLevel: Math.min(max + 2, Scene.MAX_LEVELS) };
+    }
+
+    clearSelectedObject(): void {
+        this.selectedObject = undefined;
+    }
+
     private persistWorkbenchPluginState(): void {
         if (typeof localStorage === "undefined") {
             return;
@@ -666,6 +829,8 @@ export class MapEditor {
                 // Migration guard: Height is now a primary tool (and also owns Smooth mode).
                 // Keep it available even when older saved layouts/tools omitted it.
                 nextTools.add("height");
+                nextTools.add("tile-flags");
+                nextTools.add("object-selector");
                 if (nextTools.size > 0) {
                     this.enabledEditorToolPlugins = nextTools;
                 }
@@ -777,6 +942,9 @@ export class MapEditor {
         this.overlayTypeLoader = this.loaderFactory.getOverlayTypeLoader();
 
         bootstrapHeightToolModel(this.pluginHost);
+        bootstrapPaintToolsStripModel(this.pluginHost);
+        bootstrapEditorBottomBarModel(this.pluginHost);
+        bootstrapTileFlagsToolModel(this.pluginHost);
         bootstrapUnderlayGradient(this.pluginHost);
         bootstrapOverlayGradient(this.pluginHost);
 
@@ -803,72 +971,11 @@ export class MapEditor {
     }
 
     getSearchParams(): URLSearchParamsInit {
-        const cx = this.camera.getPosX().toFixed(2).toString();
-        const cy = -this.camera.getPosY().toFixed(2).toString();
-        const cz = this.camera.getPosZ().toFixed(2).toString();
-
-        const yaw = this.camera.yaw & 2047;
-
-        const p = (this.camera.pitch | 0).toString();
-        const y = yaw.toString();
-
-        const params: any = {
-            cx,
-            cy,
-            cz,
-            p,
-            y,
-        };
-
-        if (this.camera.projectionType === ProjectionType.ORTHO) {
-            params["pt"] = "o";
-            params["z"] = this.camera.orthoZoom.toString();
-        }
-
-        if (this.loadedCache.info.name !== this.cacheList.latest.name) {
-            params["cache"] = this.loadedCache.info.name;
-        }
-
-        params["v"] = 1;
-
-        return params;
+        return {};
     }
 
-    applySearchParams(searchParams: URLSearchParams) {
-        const cx = searchParams.get("cx");
-        const cy = searchParams.get("cy");
-        const cz = searchParams.get("cz");
-
-        const pitch = searchParams.get("p");
-        const yaw = searchParams.get("y");
-
-        const v = searchParams.get("v");
-
-        if (searchParams.get("pt") === "o") {
-            this.camera.projectionType = ProjectionType.ORTHO;
-        }
-
-        const zoom = searchParams.get("z");
-        if (zoom) {
-            this.camera.orthoZoom = parseInt(zoom);
-        }
-
-        if (cx && cy && cz) {
-            const pos = vec3.fromValues(parseFloat(cx), -parseFloat(cy), parseFloat(cz));
-            this.camera.pos = pos;
-        }
-        if (pitch) {
-            this.camera.pitch = parseInt(pitch);
-            if (!v) {
-                this.camera.pitch = -this.camera.pitch;
-            }
-        }
-        if (yaw) {
-            this.camera.yaw = parseInt(yaw);
-            if (!v) {
-                this.camera.yaw = 2048 - this.camera.yaw;
-            }
-        }
+    applySearchParams(_searchParams: URLSearchParams): void {
+        /* Camera state is no longer synced to the URL. */
     }
 
     configureRegionFocus(centerMapX: number, centerMapY: number, radius: number): void {
@@ -905,6 +1012,7 @@ export class MapEditor {
         const resolvedUnderlayId =
             underlayCount > 0 ? Math.max(0, Math.min(underlayCount - 1, underlayId)) : 0;
         let updatedMaps = 0;
+        this.beginHistoryStroke("bulk", "Flat underlay");
 
         for (let mapX = minX; mapX <= maxX; mapX++) {
             for (let mapY = minY; mapY <= maxY; mapY++) {
@@ -925,9 +1033,12 @@ export class MapEditor {
                     for (let tileY = 0; tileY < 64; tileY++) {
                         const sceneX = border + tileX;
                         const sceneY = border + tileY;
-                        scene.tileUnderlays[level][sceneX][sceneY] = resolvedUnderlayId + 1;
-                        scene.setHeight(level, sceneX, sceneY, flatHeight);
+                        recordHistoryTileMutation(this.pluginHost, map, level, sceneX, sceneY, () => {
+                            scene.tileUnderlays[level][sceneX][sceneY] = resolvedUnderlayId + 1;
+                            scene.setHeight(level, sceneX, sceneY, flatHeight);
+                        });
                         renderer.addAffectedTile(map.mapX * 64 + tileX, map.mapY * 64 + tileY);
+                        renderer.addHeightChangedTile(map.mapX * 64 + tileX, map.mapY * 64 + tileY);
                     }
                 }
 
@@ -940,7 +1051,10 @@ export class MapEditor {
 
         if (updatedMaps > 0) {
             renderer.updateAffectedTiles();
+            this.commitHistoryStroke();
             this.scheduleMinimapRefreshAfterEdit();
+        } else {
+            this.mapEditHistory.cancelStroke();
         }
 
         return updatedMaps;
@@ -1024,6 +1138,7 @@ export class MapEditor {
         const shouldCopyTemplate = terrainPreset === "flat";
         let updatedMaps = 0;
         let templateMap: EditorMapSquare | undefined;
+        this.beginHistoryStroke("sandbox", `Sandbox ${terrainPreset} terrain`);
 
         const splitRgb = (rgb: number): [number, number, number] => [
             (rgb >> 16) & 0xff,
@@ -1214,10 +1329,13 @@ export class MapEditor {
                                 heightOffset = -Math.max(8, terrainRise);
                             }
                         }
-                        scene.setHeight(level, sceneX, sceneY, flatHeight + heightOffset);
-                        scene.tileUnderlays[level][sceneX][sceneY] = paintedUnderlay;
-                        scene.tileShapes[level][sceneX][sceneY] = 0;
-                        scene.tileOverlays[level][sceneX][sceneY] = paintedOverlay;
+                        const nextHeight = flatHeight + heightOffset;
+                        recordHistoryTileMutation(this.pluginHost, map, level, sceneX, sceneY, () => {
+                            scene.setHeight(level, sceneX, sceneY, nextHeight);
+                            scene.tileUnderlays[level][sceneX][sceneY] = paintedUnderlay;
+                            scene.tileShapes[level][sceneX][sceneY] = 0;
+                            scene.tileOverlays[level][sceneX][sceneY] = paintedOverlay;
+                        });
                     }
                 }
             }
@@ -1256,6 +1374,7 @@ export class MapEditor {
                 for (let tileX = 0; tileX < 64; tileX++) {
                     for (let tileY = 0; tileY < 64; tileY++) {
                         renderer.addAffectedTile(map.mapX * 64 + tileX, map.mapY * 64 + tileY);
+                        renderer.addHeightChangedTile(map.mapX * 64 + tileX, map.mapY * 64 + tileY);
                     }
                 }
 
@@ -1269,15 +1388,17 @@ export class MapEditor {
 
         if (updatedMaps > 0) {
             renderer.updateAffectedTiles();
+            this.commitHistoryStroke();
             this.scheduleMinimapRefreshAfterEdit();
+        } else {
+            this.mapEditHistory.cancelStroke();
         }
 
         return updatedMaps;
     }
 
     updateSearchParams(): void {
-        this.needsSearchParamUpdate = true;
-        this.lastTimeSearchParamsUpdated = performance.now();
+        /* No-op: editor camera is not written to the URL. */
     }
 
     setViewMode(mode: MapEditorViewMode): void {

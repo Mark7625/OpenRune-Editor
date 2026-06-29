@@ -1,0 +1,48 @@
+.map-editor-workbench-dockview.dv-dockview {
+    --dv-paneview-header-height: 28px;
+    --dv-border-radius: 0.375rem;
+    --dv-tabs-and-actions-container-height: 32px;
+    --dv-group-view-background-color: transparent;
+    --dv-tabs-and-actions-container-background-color: transparent;
+    --dv-activegroup-visiblepanel-tab-background-color: hsl(var(--card) / 0.95);
+    --dv-activegroup-hiddenpanel-tab-background-color: hsl(var(--muted) / 0.55);
+    --dv-inactivegroup-visiblepanel-tab-background-color: hsl(var(--card) / 0.75);
+    --dv-inactivegroup-hiddenpanel-tab-background-color: hsl(var(--muted) / 0.35);
+    --dv-activegroup-visiblepanel-tab-color: hsl(var(--foreground));
+    --dv-activegroup-hiddenpanel-tab-color: hsl(var(--muted-foreground));
+    --dv-inactivegroup-visiblepanel-tab-color: hsl(var(--muted-foreground));
+    --dv-inactivegroup-hiddenpanel-tab-color: hsl(var(--muted-foreground) / 0.85);
+    --dv-tab-divider-color: transparent;
+    --dv-separator-border: hsl(var(--border) / 0.45);
+    --dv-paneview-header-border-color: hsl(var(--border) / 0.45);
+    --dv-sash-color: hsl(var(--border) / 0.35);
+    --dv-active-sash-color: hsl(var(--primary) / 0.45);
+}
+
+.map-editor-workbench-dockview .dv-tabs-and-actions-container {
+    padding: 6px 8px 0;
+    gap: 4px;
+}
+
+.map-editor-workbench-dockview .dv-tabs-container .dv-tab {
+    border: 1px solid hsl(var(--border) / 0.8);
+    border-bottom: none;
+    border-radius: 0.375rem 0.375rem 0 0;
+    margin-right: 4px;
+    box-shadow: 0 1px 2px hsl(var(--background) / 0.35);
+    backdrop-filter: blur(8px);
+}
+
+.map-editor-workbench-dockview .dv-tabs-container .dv-tab.dv-active-tab {
+    border-color: hsl(var(--border) / 0.85);
+}
+
+.map-editor-workbench-dockview .dv-content-container {
+    background: transparent;
+}
+
+.map-editor-workbench-dockview .dv-react-part {
+    min-height: 0;
+    min-width: 0;
+    height: 100%;
+}

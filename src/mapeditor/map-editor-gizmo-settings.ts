@@ -11,10 +11,16 @@ export interface BrushOutlineAppearance {
     outlineThickness: number;
 }
 
+export interface ObjectSelectorAppearance {
+    hover: Rgba;
+    selected: Rgba;
+}
+
 export interface MapEditorGizmoAppearance {
     mapSquareGrid: Rgba;
     chunkGrid: Rgba;
     brushOutline: BrushOutlineAppearance;
+    objectSelector: ObjectSelectorAppearance;
 }
 
 export const DEFAULT_BRUSH_OUTLINE: BrushOutlineAppearance = {
@@ -23,10 +29,16 @@ export const DEFAULT_BRUSH_OUTLINE: BrushOutlineAppearance = {
     outlineThickness: 0.02 + (2 / 100) * 0.33,
 };
 
+export const DEFAULT_OBJECT_SELECTOR: ObjectSelectorAppearance = {
+    hover: [1, 0.55, 0.1, 1],
+    selected: [0.2, 0.55, 1, 1],
+};
+
 export const DEFAULT_GIZMO_APPEARANCE: MapEditorGizmoAppearance = {
     mapSquareGrid: [1, 0, 0, 1],
     chunkGrid: [0, 1, 0, 1],
     brushOutline: { ...DEFAULT_BRUSH_OUTLINE },
+    objectSelector: { ...DEFAULT_OBJECT_SELECTOR },
 };
 
 function pickRgba(o: Record<string, unknown>, key: string): Rgba | undefined {
@@ -106,6 +118,24 @@ export function loadGizmoAppearanceFromStorage(): Partial<MapEditorGizmoAppearan
                     fill: legacyFill ?? DEFAULT_BRUSH_OUTLINE.fill,
                     outline: legacyOutline ?? DEFAULT_BRUSH_OUTLINE.outline,
                     outlineThickness: DEFAULT_BRUSH_OUTLINE.outlineThickness,
+                };
+            }
+        }
+
+        const os = o.objectSelector;
+        if (os && typeof os === "object") {
+            const hover = pickRgba(os as Record<string, unknown>, "hover");
+            const selected = pickRgba(os as Record<string, unknown>, "selected");
+            if (hover && selected) {
+                out.objectSelector = { hover, selected };
+            }
+        } else {
+            const legacyHover = pickRgba(o, "objectSelectorHover");
+            const legacySelected = pickRgba(o, "objectSelectorSelected");
+            if (legacyHover || legacySelected) {
+                out.objectSelector = {
+                    hover: legacyHover ?? DEFAULT_OBJECT_SELECTOR.hover,
+                    selected: legacySelected ?? DEFAULT_OBJECT_SELECTOR.selected,
                 };
             }
         }

@@ -2,7 +2,34 @@ import { clamp } from "../../../util/MathUtil";
 import { getActivePaintModifiers } from "../../editor-tool-input";
 import { getBuiltinEditorToolPlugin } from "./current-plugin-layout.builtin";
 import { getHeightToolModel } from "./height-tool-model";
+import { recordHistoryTileMutation } from "../../map-editor-history-record";
+import type { EditorMapSquare } from "../../webgl/EditorMapSquare";
 import type { WebGLMapEditorRenderer } from "../../webgl/WebGLMapEditorRenderer";
+
+function markHeightTileEdit(renderer: WebGLMapEditorRenderer, worldX: number, worldY: number): void {
+    renderer.addHeightChangedTile(worldX, worldY);
+    for (let x = worldX - 2; x <= worldX + 1; x++) {
+        for (let y = worldY - 2; y <= worldY + 1; y++) {
+            renderer.addAffectedTile(x, y);
+        }
+    }
+}
+
+function applyHeightChange(
+    renderer: WebGLMapEditorRenderer,
+    map: EditorMapSquare,
+    level: number,
+    sceneX: number,
+    sceneY: number,
+    worldX: number,
+    worldY: number,
+    nextHeight: number,
+): void {
+    recordHistoryTileMutation(renderer.host, map, level, sceneX, sceneY, () => {
+        map.scene.setHeight(level, sceneX, sceneY, nextHeight);
+    });
+    markHeightTileEdit(renderer, worldX, worldY);
+}
 
 export function applyHeightBlendRuntime(
     renderer: WebGLMapEditorRenderer,
@@ -76,12 +103,7 @@ export function applyHeightBlendRuntime(
             if (nextHeight === height) {
                 continue;
             }
-            scene.setHeight(level, sceneX, sceneY, nextHeight);
-            for (let x = worldX - 2; x <= worldX + 1; x++) {
-                for (let y = worldY - 2; y <= worldY + 1; y++) {
-                    renderer.addAffectedTile(x, y);
-                }
-            }
+            applyHeightChange(renderer, map as EditorMapSquare, level, sceneX, sceneY, worldX, worldY, nextHeight);
         }
         map.heightUpdated = true;
     }
@@ -162,12 +184,7 @@ export function applyHeightSlopeRuntime(
             if (nextHeight === currentHeight) {
                 continue;
             }
-            scene.setHeight(level, sceneX, sceneY, nextHeight);
-            for (let x = worldX - 2; x <= worldX + 1; x++) {
-                for (let y = worldY - 2; y <= worldY + 1; y++) {
-                    renderer.addAffectedTile(x, y);
-                }
-            }
+            applyHeightChange(renderer, map as EditorMapSquare, level, sceneX, sceneY, worldX, worldY, nextHeight);
         }
         map.heightUpdated = true;
     }
@@ -231,12 +248,7 @@ export function applyHeightSmoothingRuntime(
             if (newHeight === height) {
                 continue;
             }
-            scene.setHeight(level, sceneX, sceneY, newHeight);
-            for (let x = worldX - 2; x <= worldX + 1; x++) {
-                for (let y = worldY - 2; y <= worldY + 1; y++) {
-                    renderer.addAffectedTile(x, y);
-                }
-            }
+            applyHeightChange(renderer, map as EditorMapSquare, level, sceneX, sceneY, worldX, worldY, newHeight);
         }
 
         map.heightUpdated = true;
@@ -275,17 +287,11 @@ export function applyHeightAdjustmentRuntime(
                 continue;
             }
 
-            scene.setHeight(level, sceneX, sceneY, newHeight);
-
             const tileX = sceneX - map.borderSize;
             const tileY = sceneY - map.borderSize;
             const worldX = map.mapX * 64 + tileX;
             const worldY = map.mapY * 64 + tileY;
-            for (let x = worldX - 2; x <= worldX + 1; x++) {
-                for (let y = worldY - 2; y <= worldY + 1; y++) {
-                    renderer.addAffectedTile(x, y);
-                }
-            }
+            applyHeightChange(renderer, map as EditorMapSquare, level, sceneX, sceneY, worldX, worldY, newHeight);
         }
 
         map.heightUpdated = true;
@@ -326,12 +332,7 @@ export function applyHeightFlattenRuntime(
             if (nextHeight === currentHeight) {
                 continue;
             }
-            scene.setHeight(level, sceneX, sceneY, nextHeight);
-            for (let x = worldX - 2; x <= worldX + 1; x++) {
-                for (let y = worldY - 2; y <= worldY + 1; y++) {
-                    renderer.addAffectedTile(x, y);
-                }
-            }
+            applyHeightChange(renderer, map as EditorMapSquare, level, sceneX, sceneY, worldX, worldY, nextHeight);
         }
         map.heightUpdated = true;
     }
@@ -365,12 +366,7 @@ export function applyHeightTerraceRuntime(
             if (nextHeight === currentHeight) {
                 continue;
             }
-            scene.setHeight(level, sceneX, sceneY, nextHeight);
-            for (let x = worldX - 2; x <= worldX + 1; x++) {
-                for (let y = worldY - 2; y <= worldY + 1; y++) {
-                    renderer.addAffectedTile(x, y);
-                }
-            }
+            applyHeightChange(renderer, map as EditorMapSquare, level, sceneX, sceneY, worldX, worldY, nextHeight);
         }
         map.heightUpdated = true;
     }

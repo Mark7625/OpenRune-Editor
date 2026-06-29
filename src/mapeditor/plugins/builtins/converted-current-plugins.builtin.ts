@@ -151,9 +151,23 @@ export const minimapWorkbenchPlugin: MapEditorPlugin = {
     },
 };
 
+export const objectSelectorToolPlugin: MapEditorPlugin = {
+    id: toConvertedPluginId("tool", "object-selector"),
+    manifest: {
+        icon: "🧩",
+        name: "Object Selector",
+        description: "Hover and click world objects to inspect them with wireframe highlights.",
+        author: "OpenRune",
+        version: "1.0.0",
+        tags: ["tool", "converted", "objects"],
+        showInHub: true,
+    },
+};
+
 export const convertedCurrentBuiltinPlugins: readonly MapEditorPlugin[] = [
     terrainPaintToolsPlugin,
     heightToolPlugin,
+    objectSelectorToolPlugin,
     brushesPlugin,
     paintToolsStripWorkbenchPlugin,
     brushWorkspaceWorkbenchPlugin,

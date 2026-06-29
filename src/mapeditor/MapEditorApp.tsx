@@ -15,6 +15,13 @@ import { cn } from "../util/cn";
 import type { IEditorPluginHost } from "./plugins/editor-plugin-host";
 import { MapEditor } from "./MapEditor";
 import { MapEditorContainer } from "./MapEditorContainer";
+import {
+    registerMapEditorExternalHost,
+    setMapEditorExternalPanelCloseHandler,
+    unregisterMapEditorExternalHost,
+} from "./map-editor-external-panel";
+import { isMapEditorFloatablePanel } from "./map-editor-panel-display";
+import { restoreMapEditorExternalPopout } from "./map-editor-popout-actions";
 
 registerSerializer(renderDataLoaderSerializer);
 
@@ -148,7 +155,7 @@ function sanitizePersistedImage(previewUrl: string, regionId: number): string {
 
 export function MapEditorApp(): JSX.Element {
     const SANDBOX_PREVIEW_FOOTPRINT_PX = 177;
-    const [searchParams] = useSearchParams();
+    const [, setSearchParams] = useSearchParams();
     const navigate = useNavigate();
     const location = useLocation();
 
@@ -282,8 +289,7 @@ export function MapEditorApp(): JSX.Element {
         lastSavedSessionKeyRef.current = sessionKey;
     }, [activeCacheProfileId, activeCacheProfileName, mapEditor]);
 
-    // Load once per route (not per query string): camera/editor sync updates the URL via setSearchParams;
-    // depending on `location.search` would remount, abort, and create a new MapEditor (worker re-inits).
+    // Load once per route (not per query string).
     useEffect(() => {
         if (pluginHost) {
             return;
@@ -346,11 +352,10 @@ export function MapEditorApp(): JSX.Element {
                 cacheListForEditor,
                 cache,
             );
-            mapEditorInstance.applySearchParams(searchParams);
-
             setLoadingProgress(100);
             setMapEditor(mapEditorInstance);
             setPluginHost(mapEditorInstance.pluginHost);
+            setSearchParams({}, { replace: true });
         };
 
         if (isIos) {
@@ -375,11 +380,27 @@ export function MapEditorApp(): JSX.Element {
                 abortController.abort("component-unmount");
             }
         };
-    }, [location.pathname, navigate, pluginHost, searchParams]);
+    }, [location.pathname, navigate, pluginHost, setSearchParams]);
 
     useEffect(() => {
         latestLastLaunchMetaRef.current = lastLaunchMeta;
     }, [lastLaunchMeta]);
+
+    useEffect(() => {
+        if (!pluginHost) {
+            return;
+        }
+        registerMapEditorExternalHost(pluginHost);
+        setMapEditorExternalPanelCloseHandler((panelId) => {
+            if (panelId === "editor-brush-workspace" || isMapEditorFloatablePanel(panelId)) {
+                restoreMapEditorExternalPopout(panelId);
+            }
+        });
+        return () => {
+            setMapEditorExternalPanelCloseHandler(null);
+            unregisterMapEditorExternalHost();
+        };
+    }, [pluginHost]);
 
     useEffect(() => {
         if (!showLaunchPanel || !activeCacheProfileId) {

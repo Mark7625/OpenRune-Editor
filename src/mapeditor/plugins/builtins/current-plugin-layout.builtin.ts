@@ -6,13 +6,17 @@ import {
     isInBuiltinBrushShape,
 } from "./brushes/brushes.registry";
 import { heightEditorTool } from "./height.plugin";
+import { objectSelectorEditorTool } from "./object-selector.plugin";
 import { overlayEditorTool } from "./overlay.plugin";
+import { tileFlagsEditorTool } from "./tile-flags.plugin";
 import { underlayEditorTool } from "./underlay.plugin";
 
 export const BUILTIN_EDITOR_TOOL_PLUGINS: readonly EditorToolPlugin[] = [
     underlayEditorTool,
     overlayEditorTool,
     heightEditorTool,
+    tileFlagsEditorTool,
+    objectSelectorEditorTool,
 ];
 
 const editorToolPluginById: Record<MapEditorTool, EditorToolPlugin> = {
@@ -20,6 +24,8 @@ const editorToolPluginById: Record<MapEditorTool, EditorToolPlugin> = {
     overlay: overlayEditorTool,
     height: heightEditorTool,
     smooth: heightEditorTool,
+    "object-selector": objectSelectorEditorTool,
+    "tile-flags": tileFlagsEditorTool,
 };
 
 export function getBuiltinEditorToolPlugin(tool: MapEditorTool): EditorToolPlugin {
@@ -44,13 +50,13 @@ export const BUILTIN_WORKBENCH_UI_PLUGINS: readonly {
         id: "paint_tools_strip",
         panelId: "editor-paint-tools",
         name: "Tools strip",
-        description: "Left column with paint tool icons.",
+        description: "Paint tool icons: floating overlay or docked strip on the left.",
     },
     {
         id: "brush_workspace",
         panelId: "editor-brush-workspace",
         name: "Brush bar",
-        description: "Brush shape, radius, and hints under the map view.",
+        description: "Brush shape, radius, and plane controls: floating window or docked bar below the map.",
     },
     {
         id: "scene_2d",

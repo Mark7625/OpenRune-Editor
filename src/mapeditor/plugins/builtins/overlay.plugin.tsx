@@ -504,7 +504,6 @@ export const overlayEditorTool: EditorToolPlugin = {
     actions: [{ kind: "select-tool", tool: "overlay" }],
     data: overlayToolData,
     palettePanel: OverlayEditorToolPanel,
-    brushStripHint: "Overlay target/fill behavior uses held keybinds.",
     keyBindings: [
         {
             id: "select-tool",

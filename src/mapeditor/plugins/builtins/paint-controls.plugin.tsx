@@ -2,16 +2,24 @@ import { useMemo, useSyncExternalStore } from "react";
 
 import { Button } from "../../../components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../../../components/ui/tooltip";
+import { cn } from "../../../util/cn";
 import { BUILTIN_EDITOR_TOOL_PLUGINS } from "./current-plugin-layout.builtin";
+import type { PaintToolsStripOrientation } from "./paint-tools-strip-model";
 import type { IEditorPluginHost } from "../editor-plugin-host";
 
 export interface EditorPaintControlsPluginPanelProps {
     pluginHost: IEditorPluginHost;
+    orientation?: PaintToolsStripOrientation;
+    compact?: boolean;
+    scrollable?: boolean;
 }
 
 /** Builtin plugin-owned tool strip: icons only. */
 export function EditorPaintControlsPluginPanel({
     pluginHost,
+    orientation = "vertical",
+    compact = false,
+    scrollable = true,
 }: EditorPaintControlsPluginPanelProps): JSX.Element {
     const editorTool = useSyncExternalStore(
         pluginHost.subscribeEditorTool,
@@ -30,9 +38,27 @@ export function EditorPaintControlsPluginPanel({
         [pluginHost, pluginsSnapshot],
     );
 
+    const isVertical = orientation === "vertical";
+    const tooltipSide = isVertical ? "right" : "bottom";
+
     return (
         <TooltipProvider delayDuration={300}>
-            <nav className="flex h-full min-h-0 flex-col items-center gap-1.5 py-2" aria-label="Map paint tools">
+            <nav
+                className={cn(
+                    "flex",
+                    compact
+                        ? "gap-0.5"
+                        : cn("min-h-0 flex-1 gap-1.5 p-2", scrollable ? "overflow-auto" : "overflow-hidden"),
+                    isVertical
+                        ? compact
+                            ? "flex-col items-center"
+                            : "min-h-0 flex-1 flex-col items-center"
+                        : compact
+                          ? "flex-row items-center"
+                          : "min-h-0 flex-1 flex-row flex-wrap items-center justify-center",
+                )}
+                aria-label="Map paint tools"
+            >
                 {visibleTools.map(({ id, name, description, icon: Icon }) => (
                     <Tooltip key={id}>
                         <TooltipTrigger asChild>
@@ -40,7 +66,7 @@ export function EditorPaintControlsPluginPanel({
                                 type="button"
                                 size="icon"
                                 variant={editorTool === id ? "default" : "outline"}
-                                className="h-9 w-9 shrink-0"
+                                className={cn("shrink-0", compact ? "size-8" : "h-9 w-9")}
                                 onClick={() => pluginHost.setEditorTool(id)}
                                 aria-label={name}
                                 aria-pressed={editorTool === id}
@@ -48,7 +74,7 @@ export function EditorPaintControlsPluginPanel({
                                 <Icon className="size-4" aria-hidden />
                             </Button>
                         </TooltipTrigger>
-                        <TooltipContent side="right" className="max-w-xs text-xs leading-snug">
+                        <TooltipContent side={tooltipSide} className="max-w-xs text-xs leading-snug">
                             <span className="font-medium text-foreground">{name}</span>
                             <span className="mt-1 block text-muted-foreground">{description}</span>
                         </TooltipContent>

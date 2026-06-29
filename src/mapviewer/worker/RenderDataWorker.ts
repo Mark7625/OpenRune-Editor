@@ -11,8 +11,12 @@ import {
 import { EditorMapData } from "../../mapeditor/webgl/loader/EditorMapData";
 import {
     loadEditorMapData,
+    loadEditorMapObjectData,
     loadEditorMapTerrainData,
 } from "../../mapeditor/webgl/loader/EditorMapDataLoader";
+import { EditorMapObjectChunkData } from "../../mapeditor/webgl/loader/EditorMapObjectChunkData";
+import type { SceneData } from "../../mapeditor/webgl/loader/EditorMapData";
+import type { SceneLocData } from "../../mapeditor/webgl/sceneLocData";
 import { EditorMapTerrainData } from "../../mapeditor/webgl/loader/EditorMapTerrainData";
 import { CacheSystem } from "../../rs/cache/CacheSystem";
 import { ConfigType } from "../../rs/cache/ConfigType";
@@ -256,6 +260,26 @@ const worker = {
         }
 
         return loadEditorMapTerrainData(workerState, mapX, mapY, heightMapTextureData, smoothUnderlays);
+    },
+    async loadEditorMapObjectData(
+        mapX: number,
+        mapY: number,
+        borderSize: number,
+        scene: SceneData,
+        sceneLocData: SceneLocData,
+        chunkIds: number[],
+        smoothUnderlays: boolean,
+    ): Promise<TransferDescriptor<EditorMapObjectChunkData[]>> {
+        const workerState = await workerStatePromise;
+        if (!workerState) {
+            throw new Error("Worker not initialized");
+        }
+
+        return loadEditorMapObjectData(
+            workerState,
+            { mapX, mapY, borderSize, scene, sceneLocData, chunkIds },
+            smoothUnderlays,
+        );
     },
     async loadTexture(
         id: number,

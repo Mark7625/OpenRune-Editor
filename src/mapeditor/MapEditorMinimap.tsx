@@ -8,7 +8,7 @@ import "./MapEditorMinimap.css";
 import type { IEditorPluginHost } from "./plugins/editor-plugin-host";
 
 /** Visible square (px) for the dock minimap. */
-const VIEW_SIZE = 300;
+const DEFAULT_VIEW_SIZE = 300;
 /** Rough extent of the 3×3 tile assembly in source pixels (before scale). */
 const TILE_SPACE = 765;
 /** Default multiplier on top of base fit-to-view scale (same as previous fixed zoom). */
@@ -33,18 +33,21 @@ export interface MapEditorMinimapProps {
     pluginHost: IEditorPluginHost;
     yawDegrees: number;
     onCompassClick: () => void;
+    /** When set, overrides the default fixed minimap square size. */
+    viewSize?: number;
 }
 
 export const MapEditorMinimap = memo(function MapEditorMinimap({
     pluginHost,
     yawDegrees,
     onCompassClick,
+    viewSize = DEFAULT_VIEW_SIZE,
 }: MapEditorMinimapProps): JSX.Element {
     const compassSrc = typeof compass === "string" ? compass : compass.src;
     const imagesWrapRef = useRef<HTMLDivElement>(null);
     const [zoomMultiplier, setZoomMultiplier] = useState(DEFAULT_MINIMAP_ZOOM);
 
-    const scale = (VIEW_SIZE / TILE_SPACE) * zoomMultiplier;
+    const scale = (viewSize / TILE_SPACE) * zoomMultiplier;
 
     const rebuildMinimapTiles = useCallback(() => {
         pluginHost.refreshMinimapAroundCamera();
@@ -233,7 +236,7 @@ export const MapEditorMinimap = memo(function MapEditorMinimap({
         <div className="map-editor-minimap-root">
             <div
                 className="map-editor-minimap-square border border-border bg-black"
-                style={{ width: VIEW_SIZE, height: VIEW_SIZE }}
+                style={{ width: viewSize, height: viewSize }}
             >
                 <div className="map-editor-minimap-rotate-outer">
                     <div

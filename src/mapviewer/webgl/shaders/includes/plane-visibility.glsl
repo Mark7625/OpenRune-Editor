@@ -1,0 +1,50 @@
+const int PLANE_SCENE_BORDER_SIZE = 6;
+const int PLANE_TILE_SIZE_SHIFT = 7;
+
+uniform highp usampler2DArray u_tileRenderFlags;
+
+int getTileRenderFlag(int level, vec2 pos) {
+    ivec2 ipos = ivec2(pos);
+    int tileX = ipos.x >> PLANE_TILE_SIZE_SHIFT;
+    int tileZ = ipos.y >> PLANE_TILE_SIZE_SHIFT;
+    return int(texelFetch(u_tileRenderFlags, ivec3(PLANE_SCENE_BORDER_SIZE + tileX, PLANE_SCENE_BORDER_SIZE + tileZ, level), 0).r);
+}
+
+int getTileMinLevel(int level, vec2 pos) {
+    int flags = getTileRenderFlag(level, pos);
+    if ((flags & 0x8) != 0) {
+        return 0;
+    }
+    if (level > 0 && (flags & 0x2) != 0) {
+        return level - 1;
+    }
+    return level;
+}
+
+bool isPlayerLevel(int level, vec2 pos, int playerLevel) {
+    if ((getTileRenderFlag(0, pos) & 0x2) != 0) {
+        return true;
+    }
+    if ((getTileRenderFlag(level, pos) & 0x10) != 0) {
+        return false;
+    }
+    return playerLevel == getTileMinLevel(level, pos);
+}
+
+bool isScenePlaneVisible(int plane, vec2 pos, float viewPlaneMax, float hideBelowViewPlane) {
+    int maxPlane = int(viewPlaneMax);
+    if (hideBelowViewPlane > 0.5) {
+        if (plane < maxPlane) {
+            return false;
+        }
+        return isPlayerLevel(plane, pos, maxPlane);
+    }
+
+    if (plane <= maxPlane) {
+        return true;
+    }
+    if (plane == maxPlane + 1 && maxPlane < 3) {
+        return isPlayerLevel(plane, pos, maxPlane);
+    }
+    return false;
+}

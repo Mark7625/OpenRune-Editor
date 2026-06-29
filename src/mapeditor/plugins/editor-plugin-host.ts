@@ -26,6 +26,7 @@ import type { ModelLoader } from "../../rs/model/ModelLoader";
 import type { SceneBuilder } from "../../rs/scene/SceneBuilder";
 import type { TextureLoader } from "../../rs/texture/TextureLoader";
 import type { MapEditorBrushType, MapEditorTool } from "../map-editor-kinds";
+import { editorObjectRefKey } from "../webgl/sceneLocPicker";
 import type { MapEditorGizmoAppearance } from "../map-editor-gizmo-settings";
 import type {
     MapEditor,
@@ -81,6 +82,8 @@ export interface EditorRuntimeServices {
  */
 export interface IEditorPluginHost extends EditorRsConfigServices, EditorRuntimeServices {
     notifyWorkbenchStateChanged(): void;
+    isPlaneVisible(level: number): boolean;
+    getVisiblePlaneRange(): { startLevel: number; endLevel: number };
 
     getViewerControlSettings(): MapEditorViewerControlSettings;
     setViewerControlSettings(partial: Partial<MapEditorViewerControlSettings>): MapEditorViewerControlSettings;
@@ -116,6 +119,22 @@ export interface IEditorPluginHost extends EditorRsConfigServices, EditorRuntime
 
     subscribeWorkbenchPlugins(listener: () => void): () => void;
     getWorkbenchPluginsStateSnapshot(): string;
+
+    subscribeHistory(listener: () => void): () => void;
+    getHistorySnapshot(): import("../map-editor-history").MapEditorHistorySnapshot;
+    beginHistoryStroke(tool: import("../map-editor-history").MapEditorHistoryTool, label?: string): void;
+    commitHistoryStroke(): void;
+    recordHistoryTileChange(
+        mapId: number,
+        level: number,
+        localTileId: number,
+        before: import("../map-editor-history").TileFieldSnapshot,
+        after: import("../map-editor-history").TileFieldSnapshot,
+    ): void;
+    isHistoryApplying(): boolean;
+    undoHistory(): void;
+    redoHistory(): void;
+    clearHistory(): void;
 
     saveDockPanelRestore(panelId: string, options: AddPanelOptions): void;
     peekDockPanelRestore(panelId: string): AddPanelOptions | undefined;
@@ -183,6 +202,10 @@ export interface IEditorPluginHost extends EditorRsConfigServices, EditorRuntime
     lastTimeSearchParamsUpdated: number;
     debugText?: string;
     selectedLevel: number;
+    /** Max plane (0–3) visible in the 3D viewport when {@link hideBelowViewPlane} is off. */
+    viewPlaneMax: number;
+    /** When true, hide planes below {@link viewPlaneMax} (show selected plane and above). */
+    hideBelowViewPlane: boolean;
     selectedUnderlayId: number;
     selectedOverlayId: number;
     brushSize: number;
@@ -193,6 +216,13 @@ export interface IEditorPluginHost extends EditorRsConfigServices, EditorRuntime
     overlayTargetModeToggled: boolean;
     paintMouseButton: "left" | "right";
     objectsVisible: boolean;
+    isObjectSelectorToolActive(): boolean;
+    getTilePickLevel(): number;
+    hoveredObject?: import("../webgl/sceneLocPicker").EditorObjectRef;
+    selectedObject?: import("../webgl/sceneLocPicker").EditorObjectRef;
+    setHoveredObject(ref: import("../webgl/sceneLocPicker").EditorObjectRef | undefined): void;
+    setSelectedObject(ref: import("../webgl/sceneLocPicker").EditorObjectRef | undefined): void;
+    clearSelectedObject(): void;
     terrainSmoothingEnabled: boolean;
     viewMode: MapEditorViewMode;
     sandboxModeActive: boolean;
@@ -205,6 +235,14 @@ export class EditorPluginHost implements IEditorPluginHost {
 
     notifyWorkbenchStateChanged(): void {
         this._e.notifyWorkbenchStateChanged();
+    }
+
+    isPlaneVisible(level: number): boolean {
+        return this._e.isPlaneVisible(level);
+    }
+
+    getVisiblePlaneRange(): { startLevel: number; endLevel: number } {
+        return this._e.getVisiblePlaneRange();
     }
 
     get loadedCache(): LoadedCache {
@@ -378,6 +416,40 @@ export class EditorPluginHost implements IEditorPluginHost {
         return this._e.getWorkbenchPluginsStateSnapshot();
     };
 
+    subscribeHistory = (listener: () => void): (() => void) => {
+        return this._e.subscribeHistory(listener);
+    };
+    getHistorySnapshot = (): import("../map-editor-history").MapEditorHistorySnapshot => {
+        return this._e.getHistorySnapshot();
+    };
+    beginHistoryStroke = (tool: import("../map-editor-history").MapEditorHistoryTool, label?: string): void => {
+        this._e.beginHistoryStroke(tool, label);
+    };
+    commitHistoryStroke = (): void => {
+        this._e.commitHistoryStroke();
+    };
+    recordHistoryTileChange = (
+        mapId: number,
+        level: number,
+        localTileId: number,
+        before: import("../map-editor-history").TileFieldSnapshot,
+        after: import("../map-editor-history").TileFieldSnapshot,
+    ): void => {
+        this._e.recordHistoryTileChange(mapId, level, localTileId, before, after);
+    };
+    isHistoryApplying = (): boolean => {
+        return this._e.isHistoryApplying();
+    };
+    undoHistory = (): void => {
+        this._e.undoHistory();
+    };
+    redoHistory = (): void => {
+        this._e.redoHistory();
+    };
+    clearHistory = (): void => {
+        this._e.clearHistory();
+    };
+
     saveDockPanelRestore(panelId: string, options: AddPanelOptions): void {
         this._e.saveDockPanelRestore(panelId, options);
     }
@@ -530,6 +602,18 @@ export class EditorPluginHost implements IEditorPluginHost {
     set selectedLevel(v: number) {
         this._e.selectedLevel = v;
     }
+    get viewPlaneMax(): number {
+        return this._e.viewPlaneMax;
+    }
+    set viewPlaneMax(v: number) {
+        this._e.viewPlaneMax = v;
+    }
+    get hideBelowViewPlane(): boolean {
+        return this._e.hideBelowViewPlane;
+    }
+    set hideBelowViewPlane(v: boolean) {
+        this._e.hideBelowViewPlane = v;
+    }
     get selectedUnderlayId(): number {
         return this._e.selectedUnderlayId;
     }
@@ -589,6 +673,34 @@ export class EditorPluginHost implements IEditorPluginHost {
     }
     set objectsVisible(v: boolean) {
         this._e.objectsVisible = v;
+    }
+    isObjectSelectorToolActive(): boolean {
+        return this._e.isObjectSelectorToolActive();
+    }
+
+    getTilePickLevel(): number {
+        return this._e.getTilePickLevel();
+    }
+    get hoveredObject(): import("../webgl/sceneLocPicker").EditorObjectRef | undefined {
+        return this._e.hoveredObject;
+    }
+    setHoveredObject(ref: import("../webgl/sceneLocPicker").EditorObjectRef | undefined): void {
+        if (editorObjectRefKey(this._e.hoveredObject, ref)) {
+            return;
+        }
+        this._e.hoveredObject = ref;
+        this._e.notifyWorkbenchStateChanged();
+    }
+    get selectedObject(): import("../webgl/sceneLocPicker").EditorObjectRef | undefined {
+        return this._e.selectedObject;
+    }
+    setSelectedObject(ref: import("../webgl/sceneLocPicker").EditorObjectRef | undefined): void {
+        this._e.selectedObject = ref;
+        this._e.notifyWorkbenchStateChanged();
+    }
+    clearSelectedObject(): void {
+        this._e.clearSelectedObject();
+        this._e.notifyWorkbenchStateChanged();
     }
     get terrainSmoothingEnabled(): boolean {
         return this._e.terrainSmoothingEnabled;

@@ -384,7 +384,6 @@ export const underlayEditorTool: EditorToolPlugin = {
         },
     },
     palettePanel: UnderlayEditorToolPanel,
-    brushStripHint: "Underlay gradient pattern and phase affect paint distribution.",
     keyBindings: [
         {
             id: "select-tool",

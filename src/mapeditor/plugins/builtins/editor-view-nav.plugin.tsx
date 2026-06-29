@@ -16,7 +16,7 @@ import type { IEditorPluginHost } from "../editor-plugin-host";
 import type { EditorViewNavPlugin } from "./builtin-plugin-types";
 import { workbenchBindingKey, workbenchDefaultChords } from "./workbench-keybinds.builtin";
 
-function TerrainSmoothingNavButton({ pluginHost }: { pluginHost: IEditorPluginHost }): JSX.Element {
+export function TerrainSmoothingNavButton({ pluginHost }: { pluginHost: IEditorPluginHost }): JSX.Element {
     const terrainSmoothingToggleHint = useMemo(() => {
         const key = workbenchBindingKey("toggle-terrain-smoothing");
         const chords = pluginHost.getResolvedKeybindChords(key, workbenchDefaultChords("toggle-terrain-smoothing"));
@@ -45,7 +45,7 @@ function TerrainSmoothingNavButton({ pluginHost }: { pluginHost: IEditorPluginHo
     );
 }
 
-function ObjectsVisibleNavButton({ pluginHost }: { pluginHost: IEditorPluginHost }): JSX.Element {
+export function ObjectsVisibleNavButton({ pluginHost }: { pluginHost: IEditorPluginHost }): JSX.Element {
     const objectToggleHint = useMemo(() => {
         const key = workbenchBindingKey("toggle-objects-visible");
         const chords = pluginHost.getResolvedKeybindChords(key, workbenchDefaultChords("toggle-objects-visible"));
@@ -93,7 +93,7 @@ function QuickControlsNavDropdown({ pluginHost }: { pluginHost: IEditorPluginHos
                     <SlidersHorizontal className="size-3.5" />
                 </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-52">
+            <DropdownMenuContent align="end" side="bottom" collisionPadding={8} className="w-52">
                 <DropdownMenuLabel>Quick controls</DropdownMenuLabel>
                 <DropdownMenuCheckboxItem
                     checked={pluginHost.terrainSmoothingEnabled}

@@ -12,8 +12,13 @@ import { MapSquare } from "../../mapviewer/MapManager";
 import { DrawRange } from "../../mapviewer/webgl/DrawRange";
 import { LocAnimated } from "../../mapviewer/webgl/loc/LocAnimated";
 import { SeqTypeLoader } from "../../rs/config/seqtype/SeqTypeLoader";
-import { Scene } from "../../rs/scene/Scene";
+import { Scene, loadTileRenderFlagsTextureData } from "../../rs/scene/Scene";
+import { OBJECT_CHUNK_COUNT } from "./objectChunk";
+import { applySceneLocData, type SceneLocData } from "./sceneLocData";
+import { ObjectPickIndex } from "./sceneLocPicker";
 import { EditorMapData } from "./loader/EditorMapData";
+import { EditorMapObjectChunkData } from "./loader/EditorMapObjectChunkData";
+import { createTileRenderFlagsTexture } from "../../mapviewer/webgl/TileRenderFlagsTexture";
 
 export function createHeightMapTexture(
     app: PicoApp,
@@ -37,7 +42,11 @@ export function createHeightMapTexture(
     );
 }
 
-function createObjectHeightMapTexture(app: PicoApp, borderSize: number, heightMapTextureData: Float32Array): Texture {
+function createObjectHeightMapTexture(
+    app: PicoApp,
+    borderSize: number,
+    heightMapTextureData: Float32Array,
+): Texture {
     const heightMapSize = Scene.MAP_SQUARE_SIZE + borderSize * 2;
     const intData = new Int16Array(heightMapTextureData.length);
     for (let i = 0; i < heightMapTextureData.length; i++) {
@@ -53,32 +62,177 @@ function createObjectHeightMapTexture(app: PicoApp, borderSize: number, heightMa
     });
 }
 
+export class EditorObjectChunk {
+    objectDrawRanges: DrawRange[] = [];
+    objectDrawRangesAlpha: DrawRange[] = [];
+    locsAnimated: LocAnimated[] = [];
+
+    constructor(
+        readonly chunkId: number,
+        readonly vertexBuffer: VertexBuffer,
+        readonly indexBuffer: VertexBuffer,
+        readonly vertexArray: VertexArray,
+        readonly modelInfoTexture: Texture,
+        readonly modelInfoTextureAlpha: Texture,
+        readonly drawCall: DrawCall,
+        readonly drawCallAlpha: DrawCall,
+    ) {}
+
+    static create(
+        app: PicoApp,
+        chunkData: EditorMapObjectChunkData,
+        sceneUniformBuffer: UniformBuffer,
+        textures: Texture,
+        materialsTexture: Texture,
+        objectProgram: Program,
+        objectAlphaProgram: Program,
+        objectHeightMapTexture: Texture,
+        tileRenderFlagsTexture: Texture,
+        mapX: number,
+        mapY: number,
+        seqTypeLoader: SeqTypeLoader,
+        cycle: number,
+    ): EditorObjectChunk {
+        const objectVertices = chunkData.objectVertices ?? new Uint8Array(0);
+        const objectIndices = chunkData.objectIndices ?? new Int32Array(0);
+        const objectModelTextureData = chunkData.objectModelTextureData ?? new Uint16Array(16 * 4);
+        const objectModelTextureDataAlpha =
+            chunkData.objectModelTextureDataAlpha ?? new Uint16Array(16 * 4);
+        const objectDrawRanges = chunkData.objectDrawRanges ?? [];
+        const objectDrawRangesAlpha = chunkData.objectDrawRangesAlpha ?? [];
+
+        const vertexBuffer = app.createInterleavedBuffer(12, objectVertices);
+        const indexBuffer = app.createIndexBuffer(PicoGL.UNSIGNED_INT, objectIndices);
+        const vertexArray = app
+            .createVertexArray()
+            .vertexAttributeBuffer(0, vertexBuffer, {
+                type: PicoGL.UNSIGNED_INT,
+                size: 3,
+                stride: 12,
+                integer: true as any,
+            })
+            .indexBuffer(indexBuffer);
+        const modelInfoTexture = app.createTexture2D(
+            objectModelTextureData,
+            16,
+            Math.max(Math.ceil(objectModelTextureData.length / 16 / 4), 1),
+            {
+                internalFormat: PicoGL.RGBA16UI,
+                minFilter: PicoGL.NEAREST,
+                magFilter: PicoGL.NEAREST,
+            },
+        );
+        const modelInfoTextureAlpha = app.createTexture2D(
+            objectModelTextureDataAlpha,
+            16,
+            Math.max(Math.ceil(objectModelTextureDataAlpha.length / 16 / 4), 1),
+            {
+                internalFormat: PicoGL.RGBA16UI,
+                minFilter: PicoGL.NEAREST,
+                magFilter: PicoGL.NEAREST,
+            },
+        );
+        const drawCall = app
+            .createDrawCall(objectProgram, vertexArray)
+            .uniformBlock("SceneUniforms", sceneUniformBuffer)
+            .uniform("u_mapPos", [mapX, mapY])
+            .uniform("u_timeLoaded", 0)
+            .uniform("u_drawIdOffset", 0)
+            .texture("u_textures", textures)
+            .texture("u_textureMaterials", materialsTexture)
+            .texture("u_heightMap", objectHeightMapTexture)
+            .texture("u_tileRenderFlags", tileRenderFlagsTexture)
+            .texture("u_modelInfoTexture", modelInfoTexture);
+        if (objectDrawRanges.length > 0) {
+            drawCall.drawRanges(...objectDrawRanges);
+        }
+        const drawCallAlpha = app
+            .createDrawCall(objectAlphaProgram, vertexArray)
+            .uniformBlock("SceneUniforms", sceneUniformBuffer)
+            .uniform("u_mapPos", [mapX, mapY])
+            .uniform("u_timeLoaded", 0)
+            .uniform("u_drawIdOffset", 0)
+            .texture("u_textures", textures)
+            .texture("u_textureMaterials", materialsTexture)
+            .texture("u_heightMap", objectHeightMapTexture)
+            .texture("u_tileRenderFlags", tileRenderFlagsTexture)
+            .texture("u_modelInfoTexture", modelInfoTextureAlpha);
+        if (objectDrawRangesAlpha.length > 0) {
+            drawCallAlpha.drawRanges(...objectDrawRangesAlpha);
+        }
+
+        const locsAnimated = (chunkData.locsAnimated ?? []).map(
+            (loc) =>
+                new LocAnimated(
+                    loc.drawRangeIndex,
+                    loc.drawRangeAlphaIndex,
+                    loc.drawRangeLodIndex,
+                    loc.drawRangeLodAlphaIndex,
+                    loc.drawRangeInteractIndex,
+                    loc.drawRangeInteractAlphaIndex,
+                    loc.drawRangeInteractLodIndex,
+                    loc.drawRangeInteractLodAlphaIndex,
+                    loc.anim,
+                    seqTypeLoader.load(loc.seqId),
+                    cycle,
+                    loc.randomStart,
+                ),
+        );
+
+        const chunk = new EditorObjectChunk(
+            chunkData.chunkId,
+            vertexBuffer,
+            indexBuffer,
+            vertexArray,
+            modelInfoTexture,
+            modelInfoTextureAlpha,
+            drawCall,
+            drawCallAlpha,
+        );
+        chunk.objectDrawRanges = objectDrawRanges;
+        chunk.objectDrawRangesAlpha = objectDrawRangesAlpha;
+        chunk.locsAnimated = locsAnimated;
+        return chunk;
+    }
+
+    deleteGpuResources(): void {
+        this.vertexBuffer.delete();
+        this.indexBuffer.delete();
+        this.vertexArray.delete();
+        this.modelInfoTexture.delete();
+        this.modelInfoTextureAlpha.delete();
+    }
+
+    delete(): void {
+        this.deleteGpuResources();
+    }
+}
+
 export class EditorMapSquare implements MapSquare {
     heightUpdated: boolean = false;
+    /** Lowest scene level touched by a height edit (for mesh rebuild after undo/redo). */
+    heightRebuildMinLevel: number | undefined = undefined;
     underlayUpdated: boolean = false;
     overlayUpdated: boolean = false;
+    tileRenderFlagsUpdated: boolean = false;
+    objectUpdated: boolean = false;
+    dirtyObjectChunks: Set<number> = new Set();
 
     constructor(
         readonly mapX: number,
         readonly mapY: number,
         readonly borderSize: number,
         readonly scene: Scene,
+        public sceneLocData: SceneLocData,
+        public objectPickIndex: ObjectPickIndex,
         readonly terrainVertexBuffer: VertexBuffer,
         readonly terrainVertexArray: VertexArray,
         readonly terrainDrawCall: DrawCall,
         readonly terrainDrawRanges: DrawRange[],
-        readonly objectVertexBuffer: VertexBuffer,
-        readonly objectIndexBuffer: VertexBuffer,
-        readonly objectVertexArray: VertexArray,
-        readonly objectModelInfoTexture: Texture,
-        readonly objectModelInfoTextureAlpha: Texture,
+        readonly objectChunks: EditorObjectChunk[],
         public objectHeightMapTexture: Texture,
-        readonly objectDrawCall: DrawCall,
-        readonly objectDrawCallAlpha: DrawCall,
-        readonly objectDrawRanges: DrawRange[],
-        readonly objectDrawRangesAlpha: DrawRange[],
-        readonly locsAnimated: LocAnimated[],
         public heightMapTexture: Texture,
+        public tileRenderFlagsTexture: Texture,
         public heightMapTextureData: Float32Array,
     ) {}
 
@@ -106,6 +260,15 @@ export class EditorMapSquare implements MapSquare {
         scene.tileLightOcclusions = mapData.scene.tileLightOcclusions;
         scene.tileLights = mapData.scene.tileLights;
         scene.tileBlendedColors = mapData.scene.tileBlendedColors;
+        applySceneLocData(scene, mapData.sceneLocData);
+
+        const mapId = (mapX << 8) + mapY;
+        const objectPickIndex = ObjectPickIndex.fromSceneLocData(
+            mapX,
+            mapY,
+            mapId,
+            mapData.sceneLocData,
+        );
 
         const terrainVertexBuffer = app.createInterleavedBuffer(8, mapData.terrainVertices);
         const terrainVertexArray = app
@@ -127,6 +290,11 @@ export class EditorMapSquare implements MapSquare {
             borderSize,
             mapData.heightMapTextureData,
         );
+        const tileRenderFlagsTexture = createTileRenderFlagsTexture(
+            app,
+            borderSize,
+            loadTileRenderFlagsTextureData(scene),
+        );
 
         const terrainDrawCall = app
             .createDrawCall(terrainProgram, terrainVertexArray)
@@ -135,112 +303,56 @@ export class EditorMapSquare implements MapSquare {
             .uniform("u_mapY", mapY)
             .texture("u_textures", textures)
             .texture("u_materials", materialsTexture)
-            .texture("u_heightMap", heightMapTexture);
+            .texture("u_heightMap", heightMapTexture)
+            .texture("u_tileRenderFlags", tileRenderFlagsTexture);
 
-        const objectVertices = mapData.objectVertices ?? new Uint8Array(0);
-        const objectIndices = mapData.objectIndices ?? new Int32Array(0);
-        const objectModelTextureData = mapData.objectModelTextureData ?? new Uint16Array(16 * 4);
-        const objectModelTextureDataAlpha =
-            mapData.objectModelTextureDataAlpha ?? new Uint16Array(16 * 4);
-        const objectDrawRanges = mapData.objectDrawRanges ?? [];
-        const objectDrawRangesAlpha = mapData.objectDrawRangesAlpha ?? [];
-
-        const objectVertexBuffer = app.createInterleavedBuffer(12, objectVertices);
-        const objectIndexBuffer = app.createIndexBuffer(PicoGL.UNSIGNED_INT, objectIndices);
-        const objectVertexArray = app
-            .createVertexArray()
-            .vertexAttributeBuffer(0, objectVertexBuffer, {
-                type: PicoGL.UNSIGNED_INT,
-                size: 3,
-                stride: 12,
-                integer: true as any,
-            })
-            .indexBuffer(objectIndexBuffer);
-        const objectModelInfoTexture = app.createTexture2D(
-            objectModelTextureData,
-            16,
-            Math.max(Math.ceil(objectModelTextureData.length / 16 / 4), 1),
-            {
-                internalFormat: PicoGL.RGBA16UI,
-                minFilter: PicoGL.NEAREST,
-                magFilter: PicoGL.NEAREST,
-            },
-        );
-        const objectModelInfoTextureAlpha = app.createTexture2D(
-            objectModelTextureDataAlpha,
-            16,
-            Math.max(Math.ceil(objectModelTextureDataAlpha.length / 16 / 4), 1),
-            {
-                internalFormat: PicoGL.RGBA16UI,
-                minFilter: PicoGL.NEAREST,
-                magFilter: PicoGL.NEAREST,
-            },
-        );
-        const objectDrawCall = app
-            .createDrawCall(objectProgram, objectVertexArray)
-            .uniformBlock("SceneUniforms", sceneUniformBuffer)
-            .uniform("u_mapPos", [mapX, mapY])
-            .uniform("u_timeLoaded", 0)
-            .uniform("u_drawIdOffset", 0)
-            .texture("u_textures", textures)
-            .texture("u_textureMaterials", materialsTexture)
-            .texture("u_heightMap", objectHeightMapTexture)
-            .texture("u_modelInfoTexture", objectModelInfoTexture);
-        if (objectDrawRanges.length > 0) {
-            objectDrawCall.drawRanges(...objectDrawRanges);
-        }
-        const objectDrawCallAlpha = app
-            .createDrawCall(objectAlphaProgram, objectVertexArray)
-            .uniformBlock("SceneUniforms", sceneUniformBuffer)
-            .uniform("u_mapPos", [mapX, mapY])
-            .uniform("u_timeLoaded", 0)
-            .uniform("u_drawIdOffset", 0)
-            .texture("u_textures", textures)
-            .texture("u_textureMaterials", materialsTexture)
-            .texture("u_heightMap", objectHeightMapTexture)
-            .texture("u_modelInfoTexture", objectModelInfoTextureAlpha);
-        if (objectDrawRangesAlpha.length > 0) {
-            objectDrawCallAlpha.drawRanges(...objectDrawRangesAlpha);
-        }
-        const locsAnimated = (mapData.locsAnimated ?? []).map(
-            (loc) =>
-                new LocAnimated(
-                    loc.drawRangeIndex,
-                    loc.drawRangeAlphaIndex,
-                    loc.drawRangeLodIndex,
-                    loc.drawRangeLodAlphaIndex,
-                    loc.drawRangeInteractIndex,
-                    loc.drawRangeInteractAlphaIndex,
-                    loc.drawRangeInteractLodIndex,
-                    loc.drawRangeInteractLodAlphaIndex,
-                    loc.anim,
-                    seqTypeLoader.load(loc.seqId),
+        const chunkDataList = mapData.objectChunks ?? [];
+        const objectChunks: EditorObjectChunk[] = [];
+        for (let chunkId = 0; chunkId < OBJECT_CHUNK_COUNT; chunkId++) {
+            const chunkData = chunkDataList.find((c) => c.chunkId === chunkId) ?? {
+                chunkId,
+                objectVertices: new Uint8Array(0),
+                objectIndices: new Int32Array(0),
+                objectModelTextureData: new Uint16Array(16 * 4),
+                objectModelTextureDataAlpha: new Uint16Array(16 * 4),
+                objectDrawRanges: [],
+                objectDrawRangesAlpha: [],
+                locsAnimated: [],
+            };
+            objectChunks.push(
+                EditorObjectChunk.create(
+                    app,
+                    chunkData,
+                    sceneUniformBuffer,
+                    textures,
+                    materialsTexture,
+                    objectProgram,
+                    objectAlphaProgram,
+                    objectHeightMapTexture,
+                    tileRenderFlagsTexture,
+                    mapX,
+                    mapY,
+                    seqTypeLoader,
                     cycle,
-                    loc.randomStart,
                 ),
-        );
+            );
+        }
 
         return new EditorMapSquare(
             mapX,
             mapY,
             borderSize,
             scene,
+            mapData.sceneLocData,
+            objectPickIndex,
             terrainVertexBuffer,
             terrainVertexArray,
             terrainDrawCall,
             mapData.terrainDrawRanges,
-            objectVertexBuffer,
-            objectIndexBuffer,
-            objectVertexArray,
-            objectModelInfoTexture,
-            objectModelInfoTextureAlpha,
+            objectChunks,
             objectHeightMapTexture,
-            objectDrawCall,
-            objectDrawCallAlpha,
-            objectDrawRanges,
-            objectDrawRangesAlpha,
-            locsAnimated,
             heightMapTexture,
+            tileRenderFlagsTexture,
             mapData.heightMapTextureData,
         );
     }
@@ -273,9 +385,68 @@ export class EditorMapSquare implements MapSquare {
             this.heightMapTextureData,
         );
         this.terrainDrawCall.texture("u_heightMap", this.heightMapTexture);
-        this.objectDrawCall.texture("u_heightMap", nextObjectHeightMapTexture);
-        this.objectDrawCallAlpha.texture("u_heightMap", nextObjectHeightMapTexture);
+        for (const chunk of this.objectChunks) {
+            chunk.drawCall.texture("u_heightMap", nextObjectHeightMapTexture);
+            chunk.drawCallAlpha.texture("u_heightMap", nextObjectHeightMapTexture);
+        }
         this.objectHeightMapTexture = nextObjectHeightMapTexture;
+    }
+
+    updateTileRenderFlagsTexture(app: PicoApp): void {
+        this.tileRenderFlagsTexture.delete();
+        this.tileRenderFlagsTexture = createTileRenderFlagsTexture(
+            app,
+            this.borderSize,
+            loadTileRenderFlagsTextureData(this.scene),
+        );
+        this.terrainDrawCall.texture("u_tileRenderFlags", this.tileRenderFlagsTexture);
+        for (const chunk of this.objectChunks) {
+            chunk.drawCall.texture("u_tileRenderFlags", this.tileRenderFlagsTexture);
+            chunk.drawCallAlpha.texture("u_tileRenderFlags", this.tileRenderFlagsTexture);
+        }
+    }
+
+    updateObjectChunk(
+        app: PicoApp,
+        chunkData: EditorMapObjectChunkData,
+        sceneUniformBuffer: UniformBuffer,
+        textures: Texture,
+        materialsTexture: Texture,
+        objectProgram: Program,
+        objectAlphaProgram: Program,
+        seqTypeLoader: SeqTypeLoader,
+        cycle: number,
+    ): void {
+        const chunkId = chunkData.chunkId;
+        this.objectChunks[chunkId]?.delete();
+        this.objectChunks[chunkId] = EditorObjectChunk.create(
+            app,
+            chunkData,
+            sceneUniformBuffer,
+            textures,
+            materialsTexture,
+            objectProgram,
+            objectAlphaProgram,
+            this.objectHeightMapTexture,
+            this.tileRenderFlagsTexture,
+            this.mapX,
+            this.mapY,
+            seqTypeLoader,
+            cycle,
+        );
+    }
+
+    markObjectChunksDirty(localMinX: number, localMinY: number, localMaxX: number, localMaxY: number): void {
+        this.objectUpdated = true;
+        const chunkMinX = Math.max(0, localMinX >> 3);
+        const chunkMinY = Math.max(0, localMinY >> 3);
+        const chunkMaxX = Math.min(7, localMaxX >> 3);
+        const chunkMaxY = Math.min(7, localMaxY >> 3);
+        for (let cy = chunkMinY; cy <= chunkMaxY; cy++) {
+            for (let cx = chunkMinX; cx <= chunkMaxX; cx++) {
+                this.dirtyObjectChunks.add(cy * 8 + cx);
+            }
+        }
     }
 
     canRender(frameCount: number): boolean {
@@ -285,12 +456,11 @@ export class EditorMapSquare implements MapSquare {
     delete(): void {
         this.terrainVertexBuffer.delete();
         this.terrainVertexArray.delete();
-        this.objectVertexBuffer.delete();
-        this.objectIndexBuffer.delete();
-        this.objectVertexArray.delete();
-        this.objectModelInfoTexture.delete();
-        this.objectModelInfoTextureAlpha.delete();
+        for (const chunk of this.objectChunks) {
+            chunk.delete();
+        }
         this.objectHeightMapTexture.delete();
         this.heightMapTexture.delete();
+        this.tileRenderFlagsTexture.delete();
     }
 }
