@@ -42,6 +42,22 @@ export function getMapEditorFloatableDockPanelDefaults(panelId: MapEditorDockPan
                 position: { referencePanel: "editor-underlays", direction: "within" },
                 inactive: true,
             };
+        case "editor-object-delete":
+            return {
+                id: "editor-object-delete",
+                component: "objectDeletePalette",
+                title: "Delete objects",
+                position: { referencePanel: "editor-underlays", direction: "within" },
+                inactive: true,
+            };
+        case "editor-region-stamp":
+            return {
+                id: "editor-region-stamp",
+                component: "regionStampPalette",
+                title: "Region stamp",
+                position: { referencePanel: "editor-underlays", direction: "within" },
+                inactive: true,
+            };
         case "editor-tile-flags":
             return {
                 id: "editor-tile-flags",

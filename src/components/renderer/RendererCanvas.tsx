@@ -15,6 +15,9 @@ export function RendererCanvas({ renderer }: RendererCanvasProps): JSX.Element {
             return;
         }
         host.appendChild(renderer.canvas);
+        if (renderer.overlayCanvas) {
+            host.appendChild(renderer.overlayCanvas);
+        }
 
         renderer.init().then(() => {
             renderer.start();
@@ -31,6 +34,9 @@ export function RendererCanvas({ renderer }: RendererCanvasProps): JSX.Element {
             resizeObserver.disconnect();
             renderer.stop();
             host.removeChild(renderer.canvas);
+            if (renderer.overlayCanvas) {
+                host.removeChild(renderer.overlayCanvas);
+            }
         };
     }, [renderer]);
 

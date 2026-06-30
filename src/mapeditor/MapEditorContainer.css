@@ -33,6 +33,11 @@
     background: var(--background, #171717);
 }
 
+.map-editor-viewport-canvas-host .map-editor-cpu-overlay {
+    z-index: 2;
+    pointer-events: none;
+}
+
 .map-editor-hud {
     position: absolute;
     top: 0;

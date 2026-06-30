@@ -1,7 +1,8 @@
 import { getMapSquareId } from "../rs/map/MapFileIndex";
 import type { Scene } from "../rs/scene/Scene";
 
-import type { MapEditorHistoryEntry, MapSquareTileDelta, TileFieldSnapshot } from "./map-editor-history";
+import type { MapEditorHistoryEntry, MapSquareObjectDelta, MapSquareTileDelta, TileFieldSnapshot } from "./map-editor-history";
+import { applyObjectSnapshotEntries } from "./map-editor-object-history";
 import type { EditorMapSquare } from "./webgl/EditorMapSquare";
 import type { WebGLMapEditorRenderer } from "./webgl/WebGLMapEditorRenderer";
 
@@ -123,9 +124,26 @@ function applySquareDelta(
     }
 }
 
+function applyObjectDelta(
+    renderer: WebGLMapEditorRenderer,
+    delta: MapSquareObjectDelta,
+    direction: "before" | "after",
+): void {
+    const map = renderer.mapManager.getMapById(delta.mapId) as EditorMapSquare | undefined;
+    if (!map) {
+        return;
+    }
+    const clearEntries = direction === "before" ? delta.after : delta.before;
+    const applyEntries = direction === "before" ? delta.before : delta.after;
+    applyObjectSnapshotEntries(map, delta.mapId, renderer, clearEntries, applyEntries);
+}
+
 function applyEntry(renderer: WebGLMapEditorRenderer, entry: MapEditorHistoryEntry, direction: "before" | "after"): void {
     for (const delta of entry.deltas) {
         applySquareDelta(renderer, delta, direction);
+    }
+    for (const delta of entry.objectDeltas) {
+        applyObjectDelta(renderer, delta, direction);
     }
 }
 

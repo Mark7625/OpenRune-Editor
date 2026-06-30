@@ -11,6 +11,8 @@ import { EditorLayoutRegion } from "./builtin-plugin-types";
 import { quickControlsNavPlugin } from "./editor-view-nav.plugin";
 import { heightEditorTool } from "./height.plugin";
 import { objectSelectorEditorTool } from "./object-selector.plugin";
+import { objectDeleteEditorTool } from "./object-delete.plugin";
+import { regionStampEditorTool } from "./region-stamp.plugin";
 import { overlayEditorTool } from "./overlay.plugin";
 import { tileFlagsEditorTool } from "./tile-flags.plugin";
 import { underlayEditorTool } from "./underlay.plugin";
@@ -21,6 +23,8 @@ import { getBuiltinEditorToolPlugin } from "./current-plugin-layout.builtin";
 export {
     heightEditorTool,
     objectSelectorEditorTool,
+    objectDeleteEditorTool,
+    regionStampEditorTool,
     overlayEditorTool,
     tileFlagsEditorTool,
     underlayEditorTool,

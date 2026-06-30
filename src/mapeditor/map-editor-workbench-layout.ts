@@ -14,6 +14,8 @@ const ALL_MAP_EDITOR_TOOLS: readonly MapEditorTool[] = [
     "height",
     "tile-flags",
     "object-selector",
+    "object-delete",
+    "region-stamp",
 ];
 
 /** Dock panel for each paint tool’s palette tab. */
@@ -23,6 +25,8 @@ export const EDITOR_TOOL_DOCK_PANEL: Partial<Record<MapEditorTool, MapEditorDock
     height: "editor-height",
     "tile-flags": "editor-tile-flags",
     "object-selector": "editor-object-selector",
+    "object-delete": "editor-object-delete",
+    "region-stamp": "editor-region-stamp",
 };
 
 /** Extra workbench regions (not tied to a single paint tool). */

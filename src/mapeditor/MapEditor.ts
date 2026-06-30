@@ -57,6 +57,19 @@ import {
 } from "./plugins/builtins/tile-flags-tool-model";
 import { bootstrapUnderlayGradient, getUnderlayGradientWorkbenchSnapshot } from "./plugins/builtins/underlay-gradient-model";
 import { bootstrapOverlayGradient, getOverlayGradientWorkbenchSnapshot } from "./plugins/builtins/overlay-gradient-model";
+import { rotateSelectedObject as rotateSelectedObjectRuntime } from "./plugins/builtins/object-transform-runtime";
+import { deleteObjectRef as deleteObjectRefRuntime } from "./plugins/builtins/object-delete-runtime";
+import { captureRegionStamp } from "./plugins/builtins/region-stamp-capture";
+import { deleteRegionBounds, pasteRegionStampAt as pasteRegionStampAtRuntime } from "./plugins/builtins/region-stamp-apply";
+import {
+    DEFAULT_REGION_STAMP_COPY_OPTIONS,
+    resolveRegionStampCopyOptions,
+    type RegionStampCopyOptions,
+} from "./plugins/builtins/region-stamp-copy-options";
+import { clearRegionStampLivePreview } from "./plugins/builtins/region-stamp-live-preview";
+import type { RegionStamp, WorldTileBounds } from "./plugins/builtins/region-stamp-types";
+import { normalizeWorldTileBounds } from "./plugins/builtins/region-stamp-types";
+import { isCopyableObjectKind } from "./plugins/builtins/object-copy-placement";
 import type { EditorToolKeyChord } from "./plugins/builtins/builtin-plugin-types";
 import {
     clampViewerControlSettings,
@@ -258,6 +271,17 @@ export class MapEditor {
     objectsVisible: boolean = true;
     hoveredObject?: import("./webgl/sceneLocPicker").EditorObjectRef;
     selectedObject?: import("./webgl/sceneLocPicker").EditorObjectRef;
+    /** Source object for stamp-style copy placement (wireframe preview until click). */
+    objectCopyTemplate?: import("./webgl/sceneLocPicker").EditorObjectRef;
+    objectCopyPlacementActive: boolean = false;
+    regionStampSelectBounds?: WorldTileBounds;
+    regionStampDraftBounds?: WorldTileBounds;
+    regionStampClipboard?: RegionStamp;
+    regionStampPlacementActive: boolean = false;
+    regionStampRotation: number = 0;
+    regionStampCopyDialogOpen: boolean = false;
+    regionStampCopyOptions: RegionStampCopyOptions = DEFAULT_REGION_STAMP_COPY_OPTIONS;
+    regionStampPendingCopyBounds?: WorldTileBounds;
     /** Whether terrain shading uses underlay smoothing/blending across neighbors. */
     terrainSmoothingEnabled: boolean = false;
 
@@ -332,7 +356,25 @@ export class MapEditor {
             return;
         }
         if (this.editorTool === "object-selector" && tool !== "object-selector") {
+            this.cancelObjectCopyPlacement();
             this.clearSelectedObject();
+        }
+        if (tool === "object-delete" || (this.editorTool === "object-delete" && tool !== "object-delete")) {
+            this.hoveredObject = undefined;
+        }
+        if (tool === "object-delete") {
+            this.cancelObjectCopyPlacement();
+            this.clearSelectedObject();
+        }
+        if (tool === "region-stamp") {
+            this.hoveredObject = undefined;
+            this.cancelObjectCopyPlacement();
+            this.clearSelectedObject();
+        }
+        if (this.editorTool === "region-stamp" && tool !== "region-stamp") {
+            this.cancelRegionStampCopyDialog();
+            this.cancelRegionStampPlacement();
+            this.clearRegionStampSelection();
         }
         this.editorTool = tool;
         for (const listener of this.editorToolListeners) {
@@ -344,9 +386,169 @@ export class MapEditor {
         return this.editorTool === "object-selector" && this.isEditorToolPluginEnabled("object-selector");
     }
 
-    /** Plane used for tile picking (hover cursor); follows the viewport plane filter in object selector mode. */
+    isObjectDeleteToolActive(): boolean {
+        return this.editorTool === "object-delete" && this.isEditorToolPluginEnabled("object-delete");
+    }
+
+    isRegionStampToolActive(): boolean {
+        return this.editorTool === "region-stamp" && this.isEditorToolPluginEnabled("region-stamp");
+    }
+
+    getRegionStampSelectBounds(): WorldTileBounds | undefined {
+        return this.regionStampSelectBounds;
+    }
+
+    getRegionStampDraftBounds(): WorldTileBounds | undefined {
+        return this.regionStampDraftBounds;
+    }
+
+    isRegionStampPlacementActive(): boolean {
+        return this.regionStampPlacementActive && this.regionStampClipboard != null;
+    }
+
+    getRegionStampRotation(): number {
+        return this.regionStampRotation;
+    }
+
+    getRegionStampClipboard(): RegionStamp | undefined {
+        return this.regionStampClipboard;
+    }
+
+    isRegionStampCopyDialogOpen(): boolean {
+        return this.regionStampCopyDialogOpen;
+    }
+
+    getRegionStampCopyOptions(): RegionStampCopyOptions {
+        return this.regionStampCopyOptions;
+    }
+
+    private clearRegionStampLivePreviewIfNeeded(): void {
+        if (this.renderer instanceof WebGLMapEditorRenderer) {
+            clearRegionStampLivePreview(this.renderer);
+        }
+    }
+
+    openRegionStampCopyDialog(): void {
+        if (!this.regionStampSelectBounds) {
+            if (this.regionStampClipboard) {
+                this.regionStampPlacementActive = true;
+                this.notifyWorkbenchStateChanged();
+            }
+            return;
+        }
+        this.regionStampCopyDialogOpen = true;
+        this.regionStampPendingCopyBounds = this.regionStampSelectBounds;
+        this.setEditorInputSuspendedBySource("region-stamp-copy", true);
+        this.notifyWorkbenchStateChanged();
+    }
+
+    cancelRegionStampCopyDialog(): void {
+        if (!this.regionStampCopyDialogOpen && this.regionStampPendingCopyBounds == null) {
+            return;
+        }
+        this.regionStampCopyDialogOpen = false;
+        this.regionStampPendingCopyBounds = undefined;
+        this.setEditorInputSuspendedBySource("region-stamp-copy", false);
+        this.notifyWorkbenchStateChanged();
+    }
+
+    confirmRegionStampCopy(options: RegionStampCopyOptions): void {
+        if (!(this.renderer instanceof WebGLMapEditorRenderer)) {
+            this.cancelRegionStampCopyDialog();
+            return;
+        }
+        const bounds = this.regionStampPendingCopyBounds ?? this.regionStampSelectBounds;
+        this.regionStampCopyOptions = resolveRegionStampCopyOptions(options);
+        this.regionStampCopyDialogOpen = false;
+        this.regionStampPendingCopyBounds = undefined;
+        this.setEditorInputSuspendedBySource("region-stamp-copy", false);
+        if (!bounds) {
+            this.notifyWorkbenchStateChanged();
+            return;
+        }
+        this.regionStampClipboard = captureRegionStamp(this.renderer, bounds, this.regionStampCopyOptions);
+        this.regionStampPlacementActive = true;
+        this.regionStampRotation = 0;
+        this.notifyWorkbenchStateChanged();
+    }
+
+    updateRegionStampDrag(anchorWorldX: number, anchorWorldY: number, worldX: number, worldY: number): void {
+        this.regionStampDraftBounds = normalizeWorldTileBounds(anchorWorldX, anchorWorldY, worldX, worldY);
+        this.notifyWorkbenchStateChanged();
+    }
+
+    finishRegionStampDrag(anchorWorldX: number, anchorWorldY: number, worldX: number, worldY: number): void {
+        this.regionStampSelectBounds = normalizeWorldTileBounds(anchorWorldX, anchorWorldY, worldX, worldY);
+        this.regionStampDraftBounds = undefined;
+        this.regionStampPlacementActive = false;
+        this.notifyWorkbenchStateChanged();
+    }
+
+    clearRegionStampSelection(): void {
+        this.regionStampSelectBounds = undefined;
+        this.regionStampDraftBounds = undefined;
+        this.notifyWorkbenchStateChanged();
+    }
+
+    copyRegionStampSelection(): void {
+        this.openRegionStampCopyDialog();
+    }
+
+    cancelRegionStampPlacement(): void {
+        if (!this.regionStampPlacementActive && this.regionStampRotation === 0) {
+            return;
+        }
+        this.clearRegionStampLivePreviewIfNeeded();
+        this.regionStampPlacementActive = false;
+        this.regionStampRotation = 0;
+        this.notifyWorkbenchStateChanged();
+    }
+
+    rotateRegionStamp(): void {
+        if (!this.isRegionStampPlacementActive()) {
+            return;
+        }
+        this.regionStampRotation = (this.regionStampRotation + 1) & 3;
+        this.notifyWorkbenchStateChanged();
+    }
+
+    deleteRegionStampSelection(): boolean {
+        const bounds = this.regionStampSelectBounds;
+        if (!bounds || !(this.renderer instanceof WebGLMapEditorRenderer)) {
+            return false;
+        }
+        const ok = deleteRegionBounds(this.pluginHost, this.renderer, bounds);
+        if (ok) {
+            this.clearRegionStampSelection();
+            this.notifyWorkbenchStateChanged();
+        }
+        return ok;
+    }
+
+    pasteRegionStampAt(worldX: number, worldY: number): boolean {
+        const stamp = this.regionStampClipboard;
+        if (!stamp || !this.isRegionStampPlacementActive() || !(this.renderer instanceof WebGLMapEditorRenderer)) {
+            return false;
+        }
+        this.clearRegionStampLivePreviewIfNeeded();
+        const ok = pasteRegionStampAtRuntime(
+            this.pluginHost,
+            this.renderer,
+            stamp,
+            worldX,
+            worldY,
+            this.regionStampRotation,
+        );
+        if (ok) {
+            this.regionStampPlacementActive = false;
+            this.notifyWorkbenchStateChanged();
+        }
+        return ok;
+    }
+
+    /** Plane used for tile picking (hover cursor); follows the viewport plane filter in object tools. */
     getTilePickLevel(): number {
-        if (this.isObjectSelectorToolActive()) {
+        if (this.isObjectSelectorToolActive() || this.isObjectDeleteToolActive()) {
             return Math.max(0, Math.min(Scene.MAX_LEVELS - 1, this.viewPlaneMax | 0));
         }
         return this.selectedLevel;
@@ -466,6 +668,17 @@ export class MapEditor {
         }
         this.enabledEditorToolPlugins.delete(tool);
         if (tool === "object-selector") {
+            this.cancelObjectCopyPlacement();
+            this.clearSelectedObject();
+        }
+        if (tool === "object-delete") {
+            this.hoveredObject = undefined;
+        }
+        if (tool === "region-stamp") {
+            this.cancelRegionStampCopyDialog();
+            this.cancelRegionStampPlacement();
+            this.clearRegionStampSelection();
+            this.cancelObjectCopyPlacement();
             this.clearSelectedObject();
         }
         if (this.editorTool === tool) {
@@ -554,6 +767,10 @@ export class MapEditor {
         this.notifyHistoryChanged();
     };
 
+    cancelHistoryStroke = (): void => {
+        this.mapEditHistory.cancelStroke();
+    };
+
     recordHistoryTileChange = (
         mapId: number,
         level: number,
@@ -562,6 +779,15 @@ export class MapEditor {
         after: TileFieldSnapshot,
     ): void => {
         this.mapEditHistory.recordTileChange(mapId, level, localTileId, before, after);
+    };
+
+    recordHistoryObjectChange = (
+        mapId: number,
+        level: number,
+        before: import("./webgl/sceneLocData").SceneTileLocData[],
+        after: import("./webgl/sceneLocData").SceneTileLocData[],
+    ): void => {
+        this.mapEditHistory.recordObjectChange(mapId, level, before, after);
     };
 
     isHistoryApplying = (): boolean => {
@@ -635,8 +861,19 @@ export class MapEditor {
         const objectSelector = JSON.stringify({
             hovered: this.hoveredObject ?? null,
             selected: this.selectedObject ?? null,
+            copyActive: this.objectCopyPlacementActive,
+            copyTemplate: this.objectCopyTemplate ?? null,
         });
-        return `${tools}|${ui}|${brush}|${keybinds}|${viewer}|${heightStep}|${heightWorkbench}|${paintToolsStripWorkbench}|${bottomBarWorkbench}|${panelDisplayWorkbench}|${tileFlagsWorkbench}|${underlayWorkbench}|${overlayWorkbench}|${objectVisibility}|${terrainSmoothing}|${sandbox}|${objectSelector}`;
+        const regionStamp = JSON.stringify({
+            select: this.regionStampSelectBounds ?? null,
+            draft: this.regionStampDraftBounds ?? null,
+            pasteActive: this.regionStampPlacementActive,
+            rotation: this.regionStampRotation,
+            copyDialog: this.regionStampCopyDialogOpen,
+            copyOptions: this.regionStampCopyOptions,
+            clipboard: this.regionStampClipboard ? `${this.regionStampClipboard.width}x${this.regionStampClipboard.height}` : null,
+        });
+        return `${tools}|${ui}|${brush}|${keybinds}|${viewer}|${heightStep}|${heightWorkbench}|${paintToolsStripWorkbench}|${bottomBarWorkbench}|${panelDisplayWorkbench}|${tileFlagsWorkbench}|${underlayWorkbench}|${overlayWorkbench}|${objectVisibility}|${terrainSmoothing}|${sandbox}|${objectSelector}|${regionStamp}`;
     };
 
     saveDockPanelRestore(panelId: string, options: AddPanelOptions): void {
@@ -789,6 +1026,68 @@ export class MapEditor {
         this.selectedObject = undefined;
     }
 
+    isObjectCopyPlacementActive(): boolean {
+        return this.objectCopyPlacementActive && this.objectCopyTemplate != null;
+    }
+
+    getObjectCopyTemplate(): import("./webgl/sceneLocPicker").EditorObjectRef | undefined {
+        return this.objectCopyTemplate;
+    }
+
+    startObjectCopyPlacement(): boolean {
+        const ref = this.selectedObject;
+        if (!ref || !this.isObjectSelectorToolActive() || !isCopyableObjectKind(ref.kind)) {
+            return false;
+        }
+        this.objectCopyTemplate = { ...ref };
+        this.objectCopyPlacementActive = true;
+        this.selectedObject = undefined;
+        this.notifyWorkbenchStateChanged();
+        return true;
+    }
+
+    cancelObjectCopyPlacement(): void {
+        if (!this.objectCopyPlacementActive && !this.objectCopyTemplate) {
+            return;
+        }
+        this.objectCopyPlacementActive = false;
+        this.objectCopyTemplate = undefined;
+        this.notifyWorkbenchStateChanged();
+    }
+
+    rotateSelectedObject(): boolean {
+        if (!(this.renderer instanceof WebGLMapEditorRenderer)) {
+            return false;
+        }
+        return rotateSelectedObjectRuntime(this.pluginHost, this.renderer);
+    }
+
+    isObjectDeleteModeActive(): boolean {
+        if (!this.isObjectDeleteToolActive()) {
+            return false;
+        }
+        if (this.isEditorInputSuspended()) {
+            return false;
+        }
+        const input = this.inputManager;
+        return input.isKeyDown("Delete") || input.isKeyDown("Backspace");
+    }
+
+    deleteHoveredObject(): boolean {
+        const ref = this.hoveredObject;
+        if (!ref || !this.isObjectDeleteModeActive()) {
+            return false;
+        }
+        if (!(this.renderer instanceof WebGLMapEditorRenderer)) {
+            return false;
+        }
+        const ok = deleteObjectRefRuntime(this.pluginHost, this.renderer, ref);
+        if (ok) {
+            this.notifyWorkbenchStateChanged();
+        }
+        return ok;
+    }
+
     private persistWorkbenchPluginState(): void {
         if (typeof localStorage === "undefined") {
             return;
@@ -831,6 +1130,8 @@ export class MapEditor {
                 nextTools.add("height");
                 nextTools.add("tile-flags");
                 nextTools.add("object-selector");
+                nextTools.add("object-delete");
+                nextTools.add("region-stamp");
                 if (nextTools.size > 0) {
                     this.enabledEditorToolPlugins = nextTools;
                 }

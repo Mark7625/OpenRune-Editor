@@ -17,6 +17,8 @@ import { MapEditorHudContext, MapEditorWorkbenchContext } from "./map-editor-wor
 import {
     heightEditorTool,
     objectSelectorEditorTool,
+    objectDeleteEditorTool,
+    regionStampEditorTool,
     overlayEditorTool,
     tileFlagsEditorTool,
     underlayEditorTool,
@@ -81,6 +83,8 @@ function PopoutPanelBody({ panelId }: { panelId: MapEditorExternalPanelId }): JS
     const OverlayPanel = overlayEditorTool.palettePanel;
     const HeightPanel = heightEditorTool.palettePanel;
     const ObjectPanel = objectSelectorEditorTool.palettePanel;
+    const ObjectDeletePanel = objectDeleteEditorTool.palettePanel;
+    const RegionStampPanel = regionStampEditorTool.palettePanel;
     const TileFlagsPanel = tileFlagsEditorTool.palettePanel;
 
     if (panelId === "editor-brush-workspace") {
@@ -101,6 +105,10 @@ function PopoutPanelBody({ panelId }: { panelId: MapEditorExternalPanelId }): JS
                 return HeightPanel ? <HeightPanel pluginHost={host} /> : <></>;
             case "editor-object-selector":
                 return ObjectPanel ? <ObjectPanel pluginHost={host} /> : <></>;
+            case "editor-object-delete":
+                return ObjectDeletePanel ? <ObjectDeletePanel pluginHost={host} /> : <></>;
+            case "editor-region-stamp":
+                return RegionStampPanel ? <RegionStampPanel pluginHost={host} /> : <></>;
             case "editor-tile-flags":
                 return TileFlagsPanel ? <TileFlagsPanel pluginHost={host} /> : <></>;
             case "editor-history":

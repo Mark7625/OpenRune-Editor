@@ -6,7 +6,13 @@ import { getIdFromTag } from "../../rs/scene/entity/EntityTag";
 import { LocEntity } from "../../rs/scene/entity/LocEntity";
 import { Model } from "../../rs/model/Model";
 import type { EditorMapSquare } from "./EditorMapSquare";
-import type { LocEntityData, LocPlacementData, SceneLocData, SceneTileLocData } from "./sceneLocData";
+import {
+    resolveLocEntityModelParams,
+    type LocEntityData,
+    type LocPlacementData,
+    type SceneLocData,
+    type SceneTileLocData,
+} from "./sceneLocData";
 
 export type EditorObjectKind = "loc" | "wall" | "floorDecoration" | "wallDecoration";
 
@@ -17,6 +23,8 @@ export type EditorObjectRef = {
     level: number;
     anchorTileX: number;
     anchorTileY: number;
+    /** Stable scene entity tag — used to disambiguate locs with overlapping metadata. */
+    locTag: string;
     locTypeId: number;
     locModelType: number;
     rotation: number;
@@ -71,6 +79,7 @@ export class ObjectPickIndex {
                 loc.startX,
                 loc.startY,
                 "loc",
+                loc.tag,
                 loc.x,
                 loc.height,
                 loc.y,
@@ -98,6 +107,7 @@ export class ObjectPickIndex {
                     tileX,
                     tileY,
                     "floorDecoration",
+                    fd.tag,
                     fd.x,
                     fd.height,
                     fd.y,
@@ -121,6 +131,7 @@ export class ObjectPickIndex {
                     tileX,
                     tileY,
                     "wallDecoration",
+                    wd.tag,
                     wd.x,
                     wd.height,
                     wd.y,
@@ -146,6 +157,7 @@ export class ObjectPickIndex {
                         tileX,
                         tileY,
                         "wall",
+                        w.tag,
                         w.x,
                         w.height,
                         w.y,
@@ -170,11 +182,10 @@ export class ObjectPickIndex {
         for (let i = 0; i < existing.length; i++) {
             const current = existing[i];
             if (
+                current.locTag === ref.locTag &&
                 current.kind === ref.kind &&
                 current.anchorTileX === ref.anchorTileX &&
-                current.anchorTileY === ref.anchorTileY &&
-                current.locTypeId === ref.locTypeId &&
-                current.rotation === ref.rotation
+                current.anchorTileY === ref.anchorTileY
             ) {
                 return;
             }
@@ -209,17 +220,16 @@ export function editorObjectRefKey(a: EditorObjectRef | undefined, b: EditorObje
         a.mapId === b.mapId &&
         a.level === b.level &&
         a.kind === b.kind &&
+        a.locTag === b.locTag &&
         a.anchorTileX === b.anchorTileX &&
-        a.anchorTileY === b.anchorTileY &&
-        a.locTypeId === b.locTypeId &&
-        a.rotation === b.rotation
+        a.anchorTileY === b.anchorTileY
     );
 }
 
 function entityInfo(
     entity: Entity,
     sceneLoc: SceneLoc,
-    rotation: number,
+    _rotation: number,
 ): { locTypeId: number; locModelType: number; rotation: number } | undefined {
     if (entity instanceof LocEntity) {
         return {
@@ -229,10 +239,11 @@ function entityInfo(
         };
     }
     if (entity instanceof Model) {
+        const params = resolveLocEntityModelParams(sceneLoc.flags, entity);
         return {
             locTypeId: getIdFromTag(sceneLoc.tag),
-            locModelType: sceneLoc.flags & 0x3f,
-            rotation,
+            locModelType: params.type,
+            rotation: params.rotation,
         };
     }
     return undefined;
@@ -261,6 +272,7 @@ function refFromPlacement(
         level,
         anchorTileX,
         anchorTileY,
+        locTag: sceneLoc.tag.toString(),
         locTypeId: info.locTypeId,
         locModelType: info.locModelType,
         rotation: info.rotation,
@@ -289,6 +301,7 @@ function refFromLocEntityData(
     anchorTileX: number,
     anchorTileY: number,
     kind: EditorObjectKind,
+    locTag: string,
     sceneX: number,
     sceneY: number,
     sceneZ: number,
@@ -302,6 +315,7 @@ function refFromLocEntityData(
         level,
         anchorTileX,
         anchorTileY,
+        locTag,
         locTypeId: entity.id,
         locModelType: entity.type,
         rotation: entity.rotation ?? rotation,
@@ -344,6 +358,7 @@ function findObjectInSceneLocData(
                 loc.startX,
                 loc.startY,
                 "loc",
+                loc.tag,
                 loc.x,
                 loc.height,
                 loc.y,
@@ -381,6 +396,7 @@ function pickSceneTileLocEntry(
             loc.startX,
             loc.startY,
             "loc",
+            loc.tag,
             loc.x,
             loc.height,
             loc.y,
@@ -399,6 +415,7 @@ function pickSceneTileLocEntry(
             tileX,
             tileY,
             "floorDecoration",
+            fd.tag,
             fd.x,
             fd.height,
             fd.y,
@@ -417,6 +434,7 @@ function pickSceneTileLocEntry(
             tileX,
             tileY,
             "wallDecoration",
+            wd.tag,
             wd.x,
             wd.height,
             wd.y,
@@ -439,6 +457,7 @@ function pickSceneTileLocEntry(
             tileX,
             tileY,
             "wall",
+            w.tag,
             w.x,
             w.height,
             w.y,
@@ -448,6 +467,14 @@ function pickSceneTileLocEntry(
     }
 
     return undefined;
+}
+
+export function editorObjectRefFromSceneTileLocEntry(
+    map: EditorMapSquare,
+    mapId: number,
+    entry: SceneTileLocData,
+): EditorObjectRef | undefined {
+    return pickSceneTileLocEntry(map, mapId, entry);
 }
 
 function tileObjectVisible(

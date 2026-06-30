@@ -20,6 +20,8 @@ import type { MapEditorDockPanelId } from "./plugins/builtins/builtin-plugin-typ
 import {
     heightEditorTool,
     objectSelectorEditorTool,
+    objectDeleteEditorTool,
+    regionStampEditorTool,
     overlayEditorTool,
     tileFlagsEditorTool,
     underlayEditorTool,
@@ -51,6 +53,8 @@ function FloatingPanelContent({
     const OverlayPanel = overlayEditorTool.palettePanel;
     const HeightPanel = heightEditorTool.palettePanel;
     const ObjectPanel = objectSelectorEditorTool.palettePanel;
+    const ObjectDeletePanel = objectDeleteEditorTool.palettePanel;
+    const RegionStampPanel = regionStampEditorTool.palettePanel;
     const TileFlagsPanel = tileFlagsEditorTool.palettePanel;
 
     let body: JSX.Element;
@@ -66,6 +70,12 @@ function FloatingPanelContent({
             break;
         case "editor-object-selector":
             body = ObjectPanel ? <ObjectPanel pluginHost={pluginHost} /> : <></>;
+            break;
+        case "editor-object-delete":
+            body = ObjectDeletePanel ? <ObjectDeletePanel pluginHost={pluginHost} /> : <></>;
+            break;
+        case "editor-region-stamp":
+            body = RegionStampPanel ? <RegionStampPanel pluginHost={pluginHost} /> : <></>;
             break;
         case "editor-tile-flags":
             body = TileFlagsPanel ? <TileFlagsPanel pluginHost={pluginHost} /> : <></>;

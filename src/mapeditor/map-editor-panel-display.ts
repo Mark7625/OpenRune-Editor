@@ -26,6 +26,8 @@ export const MAP_EDITOR_FLOATABLE_DOCK_PANELS: readonly MapEditorFloatablePanelC
     { panelId: "editor-overlays", title: "Overlays", canExternal: true, defaultWidth: 380, defaultHeight: 520 },
     { panelId: "editor-height", title: "Height", canExternal: true, defaultWidth: 380, defaultHeight: 520 },
     { panelId: "editor-object-selector", title: "Objects", canExternal: true, defaultWidth: 380, defaultHeight: 420 },
+    { panelId: "editor-object-delete", title: "Delete objects", canExternal: true, defaultWidth: 380, defaultHeight: 420 },
+    { panelId: "editor-region-stamp", title: "Region stamp", canExternal: true, defaultWidth: 380, defaultHeight: 420 },
     { panelId: "editor-tile-flags", title: "Tile flags", canExternal: true, defaultWidth: 380, defaultHeight: 520 },
     { panelId: "editor-history", title: "History", canExternal: true, defaultWidth: 420, defaultHeight: 380 },
     { panelId: "editor-minimap", title: "Minimap", canExternal: true, defaultWidth: 360, defaultHeight: 360 },

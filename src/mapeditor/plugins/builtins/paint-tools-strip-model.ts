@@ -40,6 +40,13 @@ function parseDockSide(value: unknown): PaintToolsStripDockSide {
     return value === "left" ? "left" : "none";
 }
 
+function normalizePaintToolsStripState(state: PaintToolsStripState): PaintToolsStripState {
+    if (state.dockSide === "left") {
+        return { ...state, orientation: "vertical" };
+    }
+    return state;
+}
+
 function loadLegacyPaintToolsStripState(raw: string): PaintToolsStripState | null {
     try {
         const parsed = JSON.parse(raw) as Partial<{
@@ -50,7 +57,7 @@ function loadLegacyPaintToolsStripState(raw: string): PaintToolsStripState | nul
             rect: { x?: number; y?: number };
         }>;
         const fallback = getFallbackDefaultPosition();
-        return {
+        return normalizePaintToolsStripState({
             floatingPanelVisible: parsed.visible !== false,
             orientation: parsed.orientation === "horizontal" ? "horizontal" : "vertical",
             dockSide: parseDockSide(parsed.dockSide),
@@ -68,7 +75,7 @@ function loadLegacyPaintToolsStripState(raw: string): PaintToolsStripState | nul
                           ? parsed.rect.y
                           : fallback.y,
             },
-        };
+        });
     } catch {
         return null;
     }
@@ -88,14 +95,14 @@ function loadPaintToolsStripState(): PaintToolsStripState {
         const raw = localStorage.getItem(PAINT_TOOLS_STRIP_STORAGE_KEY);
         if (raw) {
             const parsed = loadLegacyPaintToolsStripState(raw);
-            return parsed ?? fallbackState;
+            return parsed ? normalizePaintToolsStripState(parsed) : fallbackState;
         }
         for (const legacyKey of ["map-editor-paint-tools-strip-v2", "map-editor-paint-tools-strip-v1"]) {
             const legacyRaw = localStorage.getItem(legacyKey);
             if (legacyRaw) {
                 const parsed = loadLegacyPaintToolsStripState(legacyRaw);
                 if (parsed) {
-                    return parsed;
+                    return normalizePaintToolsStripState(parsed);
                 }
             }
         }
@@ -161,6 +168,9 @@ export function getPaintToolsStripModel(host: IEditorPluginHost): PaintToolsStri
             notify(host);
         },
         setOrientation(orientation) {
+            if (state.dockSide === "left") {
+                return;
+            }
             if (state.orientation === orientation) {
                 return;
             }
@@ -169,6 +179,9 @@ export function getPaintToolsStripModel(host: IEditorPluginHost): PaintToolsStri
             notify(host);
         },
         toggleOrientation() {
+            if (state.dockSide === "left") {
+                return;
+            }
             state.orientation = state.orientation === "vertical" ? "horizontal" : "vertical";
             persistPaintToolsStripState(state);
             notify(host);

@@ -164,10 +164,38 @@ export const objectSelectorToolPlugin: MapEditorPlugin = {
     },
 };
 
+export const objectDeleteToolPlugin: MapEditorPlugin = {
+    id: toConvertedPluginId("tool", "object-delete"),
+    manifest: {
+        icon: "🗑",
+        name: "Object Delete",
+        description: "Hold Delete and hover objects to remove them from the map.",
+        author: "OpenRune",
+        version: "1.0.0",
+        tags: ["tool", "converted", "objects"],
+        showInHub: true,
+    },
+};
+
+export const regionStampToolPlugin: MapEditorPlugin = {
+    id: toConvertedPluginId("tool", "region-stamp"),
+    manifest: {
+        icon: "📋",
+        name: "Region Stamp",
+        description: "Select a tile region, copy terrain and objects, and paste elsewhere.",
+        author: "OpenRune",
+        version: "1.0.0",
+        tags: ["tool", "converted", "terrain"],
+        showInHub: true,
+    },
+};
+
 export const convertedCurrentBuiltinPlugins: readonly MapEditorPlugin[] = [
     terrainPaintToolsPlugin,
     heightToolPlugin,
     objectSelectorToolPlugin,
+    objectDeleteToolPlugin,
+    regionStampToolPlugin,
     brushesPlugin,
     paintToolsStripWorkbenchPlugin,
     brushWorkspaceWorkbenchPlugin,

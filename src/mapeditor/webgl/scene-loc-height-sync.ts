@@ -65,7 +65,7 @@ export function syncSceneLocHeightsForHeightEdit(
     const startY = borderSize;
     const endX = borderSize + Scene.MAP_SQUARE_SIZE;
     const endY = borderSize + Scene.MAP_SQUARE_SIZE;
-    const updatedLocStarts = new Set<number>();
+    const updatedLocTags = new Set<string>();
 
     for (let sceneX = startX; sceneX < endX; sceneX++) {
         for (let sceneY = startY; sceneY < endY; sceneY++) {
@@ -77,8 +77,8 @@ export function syncSceneLocHeightsForHeightEdit(
                 if (loc.startX !== sceneX || loc.startY !== sceneY) {
                     continue;
                 }
-                const locKey = (loc.startX << 16) | loc.startY;
-                if (updatedLocStarts.has(locKey)) {
+                const locTag = loc.tag.toString();
+                if (updatedLocTags.has(locTag)) {
                     continue;
                 }
 
@@ -100,7 +100,7 @@ export function syncSceneLocHeightsForHeightEdit(
                     continue;
                 }
 
-                updatedLocStarts.add(locKey);
+                updatedLocTags.add(locTag);
                 loc.height = footprintHeight(
                     scene,
                     level,

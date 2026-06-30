@@ -198,7 +198,17 @@ export abstract class MapEditorRenderer<T extends MapSquare = MapSquare> extends
             h.isEditorToolPluginEnabled("tile-flags") &&
             inputManager.isKeyDown("MouseLeft");
 
-        if (vc.mouseCameraEnabled && !tileFlagsLeftPaint && (deltaMouseX !== 0 || deltaMouseY !== 0)) {
+        const regionStampLeftSelect =
+            h.isRegionStampToolActive() &&
+            !h.isRegionStampPlacementActive() &&
+            inputManager.isKeyDown("MouseLeft");
+
+        if (
+            vc.mouseCameraEnabled &&
+            !tileFlagsLeftPaint &&
+            !regionStampLeftSelect &&
+            (deltaMouseX !== 0 || deltaMouseY !== 0)
+        ) {
             if (inputManager.isTouch) {
                 camera.move(0, clamp(-deltaMouseY, -100, 100) * 0.004, 0);
             } else if (h.viewMode === "2d" && camera.projectionType === ProjectionType.ORTHO) {

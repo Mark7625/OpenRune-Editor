@@ -59,7 +59,28 @@ import {
     createObjectProgram,
     createTerrainProgram,
 } from "./shaders/Shaders";
-import { buildModelWireframeLines, type WireframeModel } from "./objectWireframeMesh";
+import {
+    buildModelWireframeLines,
+    buildFootprintWireframeLines,
+    expandWireframeLinesToTriangleMesh,
+    offsetWireframeLines,
+    WIREFRAME_LINE_HALF_WIDTH,
+    type WireframeModel,
+} from "./objectWireframeMesh";
+import { findLocForRef, getObjectSceneModelOffset, refreshSelectedObjectRef, syncMapObjectPickIndex, syncObjectRefFromLoc, worldTileToSceneTile } from "../plugins/builtins/object-transform-runtime";
+import {
+    getCopyPreviewFootprintSceneBounds,
+    getSourceMapForTemplate,
+    placeObjectCopyAtHover,
+} from "../plugins/builtins/object-copy-placement";
+import {
+    clearRegionStampLivePreview,
+    syncRegionStampLivePreview,
+} from "../plugins/builtins/region-stamp-live-preview";
+import { buildRegionStampPreviewObjectRefs } from "../plugins/builtins/region-stamp-preview";
+import { stampHasObjectCategories, resolveRegionStampCopyOptions } from "../plugins/builtins/region-stamp-copy-options";
+import type { WorldTileBounds } from "../plugins/builtins/region-stamp-types";
+import { rotationFromLocFlags, resolveLocEntityModelParams } from "./sceneLocData";
 import {
     type EditorObjectRef,
     editorObjectRefKey,
@@ -67,6 +88,8 @@ import {
     getObjectPickLevelsAt,
 } from "./sceneLocPicker";
 import { LocModelType } from "../../rs/config/loctype/LocModelType";
+import type { LocType } from "../../rs/config/loctype/LocType";
+import { LocEntity } from "../../rs/scene/entity/LocEntity";
 import { Model } from "../../rs/model/Model";
 import { ModelData } from "../../rs/model/ModelData";
 import { applyHeightToolRuntime } from "../plugins/builtins/height-edit-runtime";
@@ -84,6 +107,8 @@ const MAX_TEXTURES = 2048;
 const TEXTURE_SIZE = 128;
 const BOUNDARY_SEG_UNIFORM_FLOATS = OVERLAY_MESH_BOUNDARY_SEG_MAX * 4;
 const boundarySegUniformScratch = new Float32Array(BOUNDARY_SEG_UNIFORM_FLOATS);
+const WIREFRAME_VERTEX_STRIDE = 16;
+const WIREFRAME_GPU_FORMAT = 2;
 
 export class WebGLMapEditorRenderer extends MapEditorRenderer<EditorMapSquare> {
     app!: PicoApp;
@@ -96,10 +121,10 @@ export class WebGLMapEditorRenderer extends MapEditorRenderer<EditorMapSquare> {
     terrainProgram?: Program;
     objectProgram?: Program;
     objectProgramAlpha?: Program;
-    objectWireframeProgram?: Program;
     tilePickingProgram?: Program;
     highlightTileProgram?: Program;
     gridProgram?: Program;
+    objectWireframeProgram?: Program;
 
     // Uniforms
     sceneUniformBuffer?: UniformBuffer;
@@ -138,10 +163,15 @@ export class WebGLMapEditorRenderer extends MapEditorRenderer<EditorMapSquare> {
     objectWireframeVertexBuffer?: VertexBuffer;
     objectWireframeVertexArray?: VertexArray;
     objectWireframeDrawCall?: DrawCall;
+
     private readonly wireframeLineCache = new Map<string, Float32Array>();
+    private readonly wireframeTriCache = new Map<string, Float32Array>();
+    private wireframeGpuBufferFloats = 0;
+    private wireframeGpuFormatVersion = 0;
 
     objectSelectorHoverColor: vec4 = vec4.fromValues(...DEFAULT_OBJECT_SELECTOR.hover);
     objectSelectorSelectedColor: vec4 = vec4.fromValues(...DEFAULT_OBJECT_SELECTOR.selected);
+    objectSelectorDeleteColor: vec4 = vec4.fromValues(1, 0.22, 0.22, 1);
 
     // State
     tilePickingBuffer = new Uint8Array(4);
@@ -275,23 +305,10 @@ export class WebGLMapEditorRenderer extends MapEditorRenderer<EditorMapSquare> {
         this.terrainProgram = terrainProgram;
         this.objectProgram = objectProgram;
         this.objectProgramAlpha = objectProgramAlpha;
-        this.objectWireframeProgram = objectWireframeProgram;
         this.tilePickingProgram = tilePickingProgram;
         this.highlightTileProgram = highlightTileProgram;
         this.gridProgram = gridProgram;
-
-        this.objectWireframeVertexBuffer = this.app.createVertexBuffer(
-            PicoGL.FLOAT,
-            3,
-            new Float32Array(0),
-            PicoGL.DYNAMIC_DRAW,
-        );
-        this.objectWireframeVertexArray = this.app
-            .createVertexArray()
-            .vertexAttributeBuffer(0, this.objectWireframeVertexBuffer);
-        this.objectWireframeDrawCall = this.app
-            .createDrawCall(objectWireframeProgram, this.objectWireframeVertexArray)
-            .primitive(PicoGL.LINES);
+        this.objectWireframeProgram = objectWireframeProgram;
 
         this.tilePickingDrawCall = this.app.createDrawCall(this.tilePickingProgram);
         this.highlightTileDrawCall = this.app.createDrawCall(this.highlightTileProgram);
@@ -664,6 +681,15 @@ export class WebGLMapEditorRenderer extends MapEditorRenderer<EditorMapSquare> {
         map.terrainVertexBuffer.data(mapData.terrainVertices);
     }
 
+    override handleInput(deltaTime: number): void {
+        if (this.host.isEditorInputSuspended()) {
+            return;
+        }
+        this.handleKeyInput(deltaTime);
+        this.handleMouseInput();
+        this.handleJoystickInput(deltaTime);
+    }
+
     override handleMouseInput(): void {
         super.handleMouseInput();
 
@@ -754,7 +780,7 @@ export class WebGLMapEditorRenderer extends MapEditorRenderer<EditorMapSquare> {
 
         // Pick hover first, then paint (updates flood stroke lock), then draw so preview matches this frame.
         this.renderTilePicking();
-        this.updateObjectSelectorState();
+        this.updateToolInteractionState();
 
         this.handleTileManipulation(time);
 
@@ -852,7 +878,7 @@ export class WebGLMapEditorRenderer extends MapEditorRenderer<EditorMapSquare> {
             }
             return;
         }
-        if (!this.paintHistoryStrokeActive && this.host.editorTool !== "object-selector") {
+        if (!this.paintHistoryStrokeActive && this.host.editorTool !== "object-selector" && this.host.editorTool !== "object-delete" && this.host.editorTool !== "region-stamp") {
             this.host.beginHistoryStroke(this.host.editorTool);
             this.paintHistoryStrokeActive = true;
         }
@@ -1140,15 +1166,23 @@ export class WebGLMapEditorRenderer extends MapEditorRenderer<EditorMapSquare> {
         }
 
         this.renderObjectSelectorWireframes();
+        this.renderObjectDeleteWireframes();
+        this.renderCopyPlacementFootprintHighlight();
+        this.renderRegionStampHighlights();
+        this.renderRegionStampObjectGhostPreview();
 
-        if (this.host.isObjectSelectorToolActive() && this.hoverWorldX !== -1 && this.hoverWorldY !== -1) {
-            this.renderObjectSelectorTileHighlight();
-        } else if (this.isTileFlagsToolActive()) {
+        if (this.isTileFlagsToolActive()) {
             this.renderVisibleTileFlagOverlays();
             if (this.hoverWorldX !== -1 && this.hoverWorldY !== -1) {
                 this.renderTileFlagsBrushPreview();
             }
-        } else if (this.hoverWorldX !== -1 && this.hoverWorldY !== -1) {
+        } else if (
+            !this.host.isObjectSelectorToolActive() &&
+            !this.host.isObjectDeleteToolActive() &&
+            !this.host.isRegionStampToolActive() &&
+            this.hoverWorldX !== -1 &&
+            this.hoverWorldY !== -1
+        ) {
             this.app.disable(PicoGL.DEPTH_TEST);
             this.app.disable(PicoGL.CULL_FACE);
             const level = this.host.selectedLevel;
@@ -1303,73 +1337,437 @@ export class WebGLMapEditorRenderer extends MapEditorRenderer<EditorMapSquare> {
     }
 
     private lastMouseLeftDown = false;
+    private lastDeleteHoverKey?: string;
+    private lastObjectDeleteModeActive = false;
+    private regionStampDragAnchor?: { worldX: number; worldY: number };
+    private regionStampWasDragging = false;
+    private lastRegionStampMouseLeft = false;
+    private regionStampPlacementPanStart?: { x: number; y: number };
+    private regionStampPlacementWasPan = false;
+    private readonly regionStampSelectColor: vec4 = vec4.fromValues(0.2, 0.85, 0.95, 0.35);
+    private readonly regionStampSelectOutlineColor: vec4 = vec4.fromValues(0.2, 0.85, 0.95, 0.85);
+    private readonly regionStampHoverTileColor: vec4 = vec4.fromValues(1, 1, 1, 1);
+    private readonly regionStampHoverTileOutlineColor: vec4 = vec4.fromValues(0.95, 0.95, 1, 1);
+    private readonly regionStampGhostWireColor: vec4 = vec4.fromValues(1, 0.62, 0.18, 0.42);
 
-    private updateObjectSelectorState(): void {
-        if (!this.host.isObjectSelectorToolActive()) {
-            this.host.setHoveredObject(undefined);
-            this.lastMouseLeftDown = false;
+    private objectRefDeleteHoverKey(ref: import("./sceneLocPicker").EditorObjectRef): string {
+        return `${ref.mapId}:${ref.level}:${ref.kind}:${ref.locTag}:${ref.anchorTileX}:${ref.anchorTileY}`;
+    }
+
+    private updateToolInteractionState(): void {
+        if (this.host.isRegionStampToolActive()) {
+            this.updateRegionStampToolState();
             return;
+        }
+        this.updateObjectToolState();
+        this.lastRegionStampMouseLeft = false;
+        this.regionStampDragAnchor = undefined;
+        this.regionStampWasDragging = false;
+        this.regionStampPlacementPanStart = undefined;
+        this.regionStampPlacementWasPan = false;
+    }
+
+    private updateRegionStampToolState(): void {
+        if (this.host.isRegionStampPlacementActive()) {
+            this.host.debugText = "Region paste — left-drag pan · click place · R rotate · Esc cancel";
+        } else if (this.host.getRegionStampDraftBounds()) {
+            this.host.debugText = "Region select — release to confirm";
+        } else if (this.host.getRegionStampSelectBounds()) {
+            this.host.debugText = "Region selected — C copy · Delete clear";
+        } else {
+            this.host.debugText = "Region Stamp — drag to select tiles";
         }
 
         if (this.hoverWorldX === -1 || this.hoverWorldY === -1) {
-            this.host.setHoveredObject(undefined);
-        } else {
-            const mapX = Math.floor(this.hoverWorldX / 64);
-            const mapY = Math.floor(this.hoverWorldY / 64);
-            const mapId = getMapSquareId(mapX, mapY);
-            const map = this.mapManager.getMap(mapX, mapY) as EditorMapSquare | undefined;
-            const localX = ((this.hoverWorldX % 64) + 64) % 64;
-            const localY = ((this.hoverWorldY % 64) + 64) % 64;
-            const sceneX = map ? localX + map.borderSize : localX;
-            const sceneY = map ? localY + map.borderSize : localY;
-            const pickLevels =
-                map && sceneX >= 0 && sceneY >= 0 && sceneX < map.scene.sizeX && sceneY < map.scene.sizeY
-                    ? getObjectPickLevelsAt(
-                          map.scene,
-                          sceneX,
-                          sceneY,
-                          this.host.viewPlaneMax,
-                          this.host.hideBelowViewPlane,
-                      )
-                    : [this.host.getTilePickLevel()];
-            const visiblePickLevels = pickLevels.filter((pickLevel) =>
-                this.host.isPlaneVisible(pickLevel),
-            );
-            this.host.setHoveredObject(
-                findObjectAtHover(
-                    (mx, my) => this.mapManager.getMap(mx, my) as EditorMapSquare | undefined,
-                    mapId,
-                    mapX,
-                    mapY,
-                    visiblePickLevels.length > 0 ? visiblePickLevels : pickLevels,
-                    this.hoverWorldX,
-                    this.hoverWorldY,
-                    this.host.viewPlaneMax,
-                ),
-            );
+            this.lastRegionStampMouseLeft = this.host.inputManager.isKeyDown("MouseLeft");
+            return;
         }
 
         const inputManager = this.host.inputManager;
         const leftDown = inputManager.isKeyDown("MouseLeft");
-        if (this.lastMouseLeftDown && !leftDown && !inputManager.isHolding() && this.host.hoveredObject) {
-            this.host.setSelectedObject({ ...this.host.hoveredObject });
+
+        if (leftDown && this.host.isRegionStampPlacementActive()) {
+            if (!this.lastRegionStampMouseLeft) {
+                this.regionStampPlacementPanStart = { x: inputManager.mouseX, y: inputManager.mouseY };
+                this.regionStampPlacementWasPan = false;
+            } else if (this.regionStampPlacementPanStart) {
+                const dx = inputManager.mouseX - this.regionStampPlacementPanStart.x;
+                const dy = inputManager.mouseY - this.regionStampPlacementPanStart.y;
+                if (dx * dx + dy * dy > 36) {
+                    this.regionStampPlacementWasPan = true;
+                }
+            }
+        } else if (leftDown && !this.host.isRegionStampPlacementActive()) {
+            if (!this.lastRegionStampMouseLeft) {
+                this.regionStampDragAnchor = { worldX: this.hoverWorldX, worldY: this.hoverWorldY };
+                this.regionStampWasDragging = false;
+            } else if (this.regionStampDragAnchor) {
+                const moved =
+                    this.regionStampDragAnchor.worldX !== this.hoverWorldX ||
+                    this.regionStampDragAnchor.worldY !== this.hoverWorldY;
+                if (moved) {
+                    this.regionStampWasDragging = true;
+                    this.host.updateRegionStampDrag(
+                        this.regionStampDragAnchor.worldX,
+                        this.regionStampDragAnchor.worldY,
+                        this.hoverWorldX,
+                        this.hoverWorldY,
+                    );
+                }
+            }
+        }
+
+        if (this.lastRegionStampMouseLeft && !leftDown) {
+            if (this.host.isRegionStampPlacementActive()) {
+                if (!this.regionStampPlacementWasPan) {
+                    this.host.pasteRegionStampAt(this.hoverWorldX, this.hoverWorldY);
+                }
+                this.regionStampPlacementPanStart = undefined;
+                this.regionStampPlacementWasPan = false;
+            } else if (!inputManager.isHolding() && this.regionStampDragAnchor) {
+                this.host.finishRegionStampDrag(
+                    this.regionStampDragAnchor.worldX,
+                    this.regionStampDragAnchor.worldY,
+                    this.hoverWorldX,
+                    this.hoverWorldY,
+                );
+                this.regionStampDragAnchor = undefined;
+                this.regionStampWasDragging = false;
+            }
+        }
+
+        this.lastRegionStampMouseLeft = leftDown;
+
+        const stamp = this.host.getRegionStampClipboard();
+        if (
+            this.host.isRegionStampPlacementActive() &&
+            stamp &&
+            this.hoverWorldX !== -1 &&
+            this.hoverWorldY !== -1
+        ) {
+            syncRegionStampLivePreview(
+                this.host,
+                this,
+                stamp,
+                this.hoverWorldX,
+                this.hoverWorldY,
+                this.host.getRegionStampRotation(),
+            );
+        } else {
+            clearRegionStampLivePreview(this);
+        }
+    }
+
+    private renderWorldTileBoundsOutline(bounds: WorldTileBounds, fill: vec4, outline: vec4, level: number): void {
+        if (!this.highlightTileDrawCall) {
+            return;
+        }
+
+        this.beginTileHighlightPass(fill, outline, level);
+
+        for (let worldX = bounds.minWorldX; worldX <= bounds.maxWorldX; worldX++) {
+            for (let worldY = bounds.minWorldY; worldY <= bounds.maxWorldY; worldY++) {
+                const edgeMask: [number, number, number, number] = [
+                    worldX > bounds.minWorldX ? 0 : 1,
+                    worldX < bounds.maxWorldX ? 0 : 1,
+                    worldY > bounds.minWorldY ? 0 : 1,
+                    worldY < bounds.maxWorldY ? 0 : 1,
+                ];
+                this.drawWorldTileHighlightAt(worldX, worldY, level, edgeMask);
+            }
+        }
+
+        this.endTileHighlightPass();
+    }
+
+    private beginTileHighlightPass(
+        fill: vec4,
+        outline: vec4,
+        level: number,
+        fillAlpha: number = this.brushFill[3],
+    ): void {
+        if (!this.highlightTileDrawCall) {
+            return;
+        }
+
+        this.app.disable(PicoGL.DEPTH_TEST);
+        this.app.disable(PicoGL.CULL_FACE);
+        this.app.enable(PicoGL.BLEND);
+        this.app.blendFunc(PicoGL.SRC_ALPHA, PicoGL.ONE_MINUS_SRC_ALPHA);
+
+        this.highlightTileDrawCall.uniform("u_fillColor", [fill[0], fill[1], fill[2], fillAlpha]);
+        this.highlightTileDrawCall.uniform("u_outlineColor", [
+            outline[0],
+            outline[1],
+            outline[2],
+            this.brushOutlineColor[3],
+        ]);
+        this.highlightTileDrawCall.uniform("u_outlineThickness", this.brushOutlineThickness);
+        this.highlightTileDrawCall.uniform("u_level", level);
+        this.highlightTileDrawCall.uniform("u_footprintPass", 0);
+        this.highlightTileDrawCall.uniform("u_boundarySegCount", 0);
+        this.highlightTileDrawCall.uniform("u_highlightShapeMode", 0);
+    }
+
+    private drawWorldTileHighlightAt(
+        worldX: number,
+        worldY: number,
+        level: number,
+        edgeMask: [number, number, number, number] = [1, 1, 1, 1],
+    ): void {
+        if (!this.highlightTileDrawCall) {
+            return;
+        }
+
+        const mapX = Math.floor(worldX / 64);
+        const mapY = Math.floor(worldY / 64);
+        const map = this.mapManager.getMap(mapX, mapY) as EditorMapSquare | undefined;
+        if (!map) {
+            return;
+        }
+
+        const lx = ((worldX % 64) + 64) % 64;
+        const ly = ((worldY % 64) + 64) % 64;
+
+        this.highlightTileDrawCall.uniform("u_level", level);
+        this.highlightTileDrawCall.uniform("u_mapX", map.mapX);
+        this.highlightTileDrawCall.uniform("u_mapY", map.mapY);
+        this.highlightTileDrawCall.texture("u_heightMap", map.heightMapTexture);
+        this.highlightTileDrawCall.uniform("u_edgeMask", edgeMask);
+        this.highlightTileDrawCall.uniform("u_tileX", lx);
+        this.highlightTileDrawCall.uniform("u_tileY", ly);
+        this.highlightTileDrawCall.drawRanges(this.highlightFullTileRange);
+        this.highlightTileDrawCall.draw();
+    }
+
+    private endTileHighlightPass(): void {
+        this.app.enable(PicoGL.CULL_FACE);
+        this.app.enable(PicoGL.DEPTH_TEST);
+    }
+
+    private renderWorldTileHighlight(
+        worldX: number,
+        worldY: number,
+        fill: vec4,
+        outline: vec4,
+        level: number,
+        edgeMask: [number, number, number, number] = [1, 1, 1, 1],
+    ): void {
+        this.beginTileHighlightPass(fill, outline, level);
+        this.drawWorldTileHighlightAt(worldX, worldY, level, edgeMask);
+        this.endTileHighlightPass();
+    }
+
+    private renderRegionStampHighlights(): void {
+        if (!this.host.isRegionStampToolActive()) {
+            return;
+        }
+
+        const level = this.host.selectedLevel;
+        const draft = this.host.getRegionStampDraftBounds();
+        const selection = this.host.getRegionStampSelectBounds();
+        const activeBounds = draft ?? selection;
+        if (activeBounds) {
+            this.renderWorldTileBoundsOutline(
+                activeBounds,
+                this.regionStampSelectColor,
+                this.regionStampSelectOutlineColor,
+                level,
+            );
+        }
+
+        if (this.hoverWorldX !== -1 && this.hoverWorldY !== -1) {
+            this.renderWorldTileHighlight(
+                this.hoverWorldX,
+                this.hoverWorldY,
+                this.regionStampHoverTileColor,
+                this.regionStampHoverTileOutlineColor,
+                level,
+            );
+        }
+    }
+
+    private renderRegionStampObjectGhostPreview(): void {
+        if (
+            !this.host.isRegionStampToolActive() ||
+            !this.host.isRegionStampPlacementActive() ||
+            !this.objectWireframeProgram ||
+            !this.sceneUniformBuffer
+        ) {
+            return;
+        }
+
+        const stamp = this.host.getRegionStampClipboard();
+        if (
+            !stamp ||
+            !stampHasObjectCategories(resolveRegionStampCopyOptions(stamp.copyOptions)) ||
+            this.hoverWorldX === -1 ||
+            this.hoverWorldY === -1
+        ) {
+            return;
+        }
+
+        const previewRefs = buildRegionStampPreviewObjectRefs(
+            this.host,
+            this,
+            stamp,
+            this.hoverWorldX,
+            this.hoverWorldY,
+            this.host.getRegionStampRotation(),
+        );
+        if (previewRefs.length === 0) {
+            return;
+        }
+
+        this.app.disable(PicoGL.DEPTH_TEST);
+        this.app.disable(PicoGL.CULL_FACE);
+        this.app.enable(PicoGL.BLEND);
+        this.app.blendFunc(PicoGL.SRC_ALPHA, PicoGL.ONE_MINUS_SRC_ALPHA);
+
+        for (const ref of previewRefs) {
+            if (!this.host.isPlaneVisible(ref.level)) {
+                continue;
+            }
+            this.drawObjectWireframe(ref, this.regionStampGhostWireColor, undefined, true);
+        }
+
+        this.app.disable(PicoGL.BLEND);
+        this.app.enable(PicoGL.CULL_FACE);
+        this.app.enable(PicoGL.DEPTH_TEST);
+    }
+
+    private updateObjectToolState(): void {
+        if (this.host.isObjectSelectorToolActive()) {
+            this.updateObjectSelectorState();
+            return;
+        }
+        if (this.host.isObjectDeleteToolActive()) {
+            this.updateObjectDeleteState();
+            return;
+        }
+        this.host.setHoveredObject(undefined);
+        this.lastMouseLeftDown = false;
+        this.lastDeleteHoverKey = undefined;
+        this.lastObjectDeleteModeActive = false;
+    }
+
+    private pickHoveredObject(): import("./sceneLocPicker").EditorObjectRef | undefined {
+        if (this.hoverWorldX === -1 || this.hoverWorldY === -1) {
+            return undefined;
+        }
+        const mapX = Math.floor(this.hoverWorldX / 64);
+        const mapY = Math.floor(this.hoverWorldY / 64);
+        const mapId = getMapSquareId(mapX, mapY);
+        const map = this.mapManager.getMap(mapX, mapY) as EditorMapSquare | undefined;
+        const localX = ((this.hoverWorldX % 64) + 64) % 64;
+        const localY = ((this.hoverWorldY % 64) + 64) % 64;
+        const sceneX = map ? localX + map.borderSize : localX;
+        const sceneY = map ? localY + map.borderSize : localY;
+        const pickLevels =
+            map && sceneX >= 0 && sceneY >= 0 && sceneX < map.scene.sizeX && sceneY < map.scene.sizeY
+                ? getObjectPickLevelsAt(
+                      map.scene,
+                      sceneX,
+                      sceneY,
+                      this.host.viewPlaneMax,
+                      this.host.hideBelowViewPlane,
+                  )
+                : [this.host.getTilePickLevel()];
+        const visiblePickLevels = pickLevels.filter((pickLevel) => this.host.isPlaneVisible(pickLevel));
+        return findObjectAtHover(
+            (mx, my) => this.mapManager.getMap(mx, my) as EditorMapSquare | undefined,
+            mapId,
+            mapX,
+            mapY,
+            visiblePickLevels.length > 0 ? visiblePickLevels : pickLevels,
+            this.hoverWorldX,
+            this.hoverWorldY,
+            this.host.viewPlaneMax,
+        );
+    }
+
+    private updateObjectSelectorState(): void {
+        if (this.host.isObjectCopyPlacementActive()) {
+            this.host.debugText = "Copy placement — click to place · Esc to cancel";
+        }
+
+        this.host.setHoveredObject(this.pickHoveredObject());
+
+        const selected = this.host.selectedObject;
+        if (selected) {
+            const selMap =
+                (this.mapManager.getMap(selected.mapX, selected.mapY) as EditorMapSquare | undefined) ??
+                (this.mapManager.getMapById(selected.mapId) as EditorMapSquare | undefined);
+            if (selMap) {
+                refreshSelectedObjectRef(this.host, selMap, selected);
+            }
+        }
+
+        const inputManager = this.host.inputManager;
+        const leftDown = inputManager.isKeyDown("MouseLeft");
+        if (this.lastMouseLeftDown && !leftDown && !inputManager.isHolding()) {
+            if (this.host.isObjectCopyPlacementActive()) {
+                const template = this.host.getObjectCopyTemplate();
+                if (template && this.hoverWorldX !== -1 && this.hoverWorldY !== -1) {
+                    const placed = placeObjectCopyAtHover(
+                        this.host,
+                        this,
+                        template,
+                        this.hoverWorldX,
+                        this.hoverWorldY,
+                    );
+                    if (placed) {
+                        this.host.notifyWorkbenchStateChanged();
+                    }
+                }
+            } else if (this.host.hoveredObject) {
+                this.host.setSelectedObject({ ...this.host.hoveredObject });
+            } else {
+                this.host.clearSelectedObject();
+            }
         }
         this.lastMouseLeftDown = leftDown;
+    }
+
+    private updateObjectDeleteState(): void {
+        const deleteHeld = this.host.isObjectDeleteModeActive();
+        if (deleteHeld !== this.lastObjectDeleteModeActive) {
+            this.lastObjectDeleteModeActive = deleteHeld;
+            this.host.notifyWorkbenchStateChanged();
+        }
+
+        this.host.debugText = deleteHeld
+            ? "Delete — hover objects to remove"
+            : "Object Delete — hold Delete to erase hovered objects";
+
+        this.host.setHoveredObject(this.pickHoveredObject());
+
+        if (deleteHeld) {
+            const hovered = this.host.hoveredObject;
+            if (!hovered) {
+                this.lastDeleteHoverKey = undefined;
+            } else {
+                const hoverKey = this.objectRefDeleteHoverKey(hovered);
+                if (hoverKey !== this.lastDeleteHoverKey) {
+                    this.lastDeleteHoverKey = hoverKey;
+                    this.host.deleteHoveredObject();
+                }
+            }
+        } else {
+            this.lastDeleteHoverKey = undefined;
+        }
     }
 
     private renderObjectSelectorWireframes(): void {
         if (!this.host.isObjectSelectorToolActive()) {
             return;
         }
-        if (
-            !this.objectWireframeDrawCall ||
-            !this.objectWireframeVertexBuffer ||
-            !this.objectWireframeVertexArray
-        ) {
+        if (!this.objectWireframeProgram || !this.sceneUniformBuffer) {
             return;
         }
 
         this.app.disable(PicoGL.DEPTH_TEST);
+        this.app.disable(PicoGL.CULL_FACE);
         this.app.enable(PicoGL.BLEND);
         this.app.blendFunc(PicoGL.SRC_ALPHA, PicoGL.ONE_MINUS_SRC_ALPHA);
 
@@ -1386,87 +1784,77 @@ export class WebGLMapEditorRenderer extends MapEditorRenderer<EditorMapSquare> {
             this.drawObjectWireframe(selected, this.objectSelectorSelectedColor);
         }
 
+        const copyTemplate = this.host.getObjectCopyTemplate();
+        if (
+            this.host.isObjectCopyPlacementActive() &&
+            copyTemplate &&
+            this.host.isPlaneVisible(copyTemplate.level) &&
+            this.hoverWorldX !== -1 &&
+            this.hoverWorldY !== -1
+        ) {
+            const mapX = Math.floor(this.hoverWorldX / 64);
+            const mapY = Math.floor(this.hoverWorldY / 64);
+            const mapId = getMapSquareId(mapX, mapY);
+            const map = this.mapManager.getMap(mapX, mapY) as EditorMapSquare | undefined;
+            if (map) {
+                const { sceneX, sceneY } = worldTileToSceneTile(this.hoverWorldX, this.hoverWorldY, map);
+                const deltaX = sceneX - copyTemplate.anchorTileX;
+                const deltaY = sceneY - copyTemplate.anchorTileY;
+                const previewRef = {
+                    ...copyTemplate,
+                    mapId,
+                    mapX,
+                    mapY,
+                    anchorTileX: sceneX,
+                    anchorTileY: sceneY,
+                    sceneX: copyTemplate.sceneX + deltaX * 128,
+                    sceneZ: copyTemplate.sceneZ + deltaY * 128,
+                };
+                this.drawObjectWireframe(previewRef, this.objectSelectorHoverColor);
+            }
+        }
+
         this.app.disable(PicoGL.BLEND);
+        this.app.enable(PicoGL.CULL_FACE);
         this.app.enable(PicoGL.DEPTH_TEST);
     }
 
-    private resolveWireframeModel(
-        locType: import("../../rs/config/loctype/LocType").LocType,
-        ref: EditorObjectRef,
-    ): WireframeModel | undefined {
-        const loaded = this.host.locModelLoader.getModel(
-            locType,
-            ref.locModelType as LocModelType,
-            ref.rotation,
-        );
-        if (loaded instanceof Model || loaded instanceof ModelData) {
-            return loaded;
+    private renderObjectDeleteWireframes(): void {
+        if (!this.host.isObjectDeleteToolActive()) {
+            return;
         }
-        return undefined;
+        if (!this.objectWireframeProgram || !this.sceneUniformBuffer) {
+            return;
+        }
+
+        const hovered = this.host.hoveredObject;
+        if (!hovered || !this.host.isPlaneVisible(hovered.level)) {
+            return;
+        }
+
+        this.app.disable(PicoGL.DEPTH_TEST);
+        this.app.disable(PicoGL.CULL_FACE);
+        this.app.enable(PicoGL.BLEND);
+        this.app.blendFunc(PicoGL.SRC_ALPHA, PicoGL.ONE_MINUS_SRC_ALPHA);
+        this.drawObjectWireframe(hovered, this.objectSelectorDeleteColor);
+        this.app.disable(PicoGL.BLEND);
+        this.app.enable(PicoGL.CULL_FACE);
+        this.app.enable(PicoGL.DEPTH_TEST);
     }
 
-    private drawObjectWireframe(ref: EditorObjectRef, color: vec4): void {
-        const locType = this.host.locTypeLoader.load(ref.locTypeId);
-        const model = this.resolveWireframeModel(locType, ref);
-        if (!model) {
+    private renderCopyPlacementFootprintHighlight(): void {
+        if (
+            !this.host.isObjectSelectorToolActive() ||
+            !this.host.isObjectCopyPlacementActive() ||
+            !this.highlightTileDrawCall ||
+            this.hoverWorldX === -1 ||
+            this.hoverWorldY === -1
+        ) {
             return;
         }
 
-        const cacheKey = `${ref.locTypeId}:${ref.locModelType}:${ref.rotation}`;
-        let lines = this.wireframeLineCache.get(cacheKey);
-        if (!lines) {
-            lines = buildModelWireframeLines(model);
-            this.wireframeLineCache.set(cacheKey, lines);
-        }
-        if (lines.length === 0) {
-            return;
-        }
-
-        const map = this.mapManager.getMap(ref.mapX, ref.mapY) as EditorMapSquare | undefined;
-        if (!map) {
-            return;
-        }
-
-        const borderOffset = map.borderSize * -128;
-        const groundY = map.scene.getHeightInterpolated(ref.level, ref.sceneX, ref.sceneZ);
-
-        const vertexCount = lines.length / 3;
-        if (vertexCount === 0) {
-            return;
-        }
-
-        this.objectWireframeVertexBuffer!.restore(lines);
-        this.objectWireframeDrawCall!
-            .drawRanges(newDrawRange(0, vertexCount))
-            .uniform("u_modelOffset", [
-                ref.sceneX + borderOffset,
-                -ref.sceneY - groundY,
-                ref.sceneZ + borderOffset,
-            ])
-            .uniform("u_mapPos", [ref.mapX, ref.mapY])
-            .uniform("u_color", color as unknown as number[])
-            .draw();
-    }
-
-    private applyObjectSelectorHighlightUniforms(): void {
-        const hover = this.objectSelectorHoverColor;
-        this.highlightTileDrawCall.uniform("u_fillColor", [
-            hover[0],
-            hover[1],
-            hover[2],
-            Math.min(hover[3], 0.35),
-        ]);
-        this.highlightTileDrawCall.uniform("u_outlineColor", [
-            hover[0],
-            hover[1],
-            hover[2],
-            1,
-        ]);
-        this.highlightTileDrawCall.uniform("u_outlineThickness", 0.08);
-    }
-
-    private renderObjectSelectorTileHighlight(): void {
-        if (this.hoverWorldX === -1 || this.hoverWorldY === -1) {
+        const template = this.host.getObjectCopyTemplate();
+        if (!template || !this.host.isPlaneVisible(template.level)) {
             return;
         }
 
@@ -1477,27 +1865,288 @@ export class WebGLMapEditorRenderer extends MapEditorRenderer<EditorMapSquare> {
             return;
         }
 
-        const lx = ((this.hoverWorldX % 64) + 64) % 64;
-        const ly = ((this.hoverWorldY % 64) + 64) % 64;
-        const level = this.host.hoveredObject?.level ?? this.host.getTilePickLevel();
+        const sourceMap = getSourceMapForTemplate(this, template);
+        if (!sourceMap) {
+            return;
+        }
+
+        const { sceneX, sceneY } = worldTileToSceneTile(this.hoverWorldX, this.hoverWorldY, map);
+        const bounds = getCopyPreviewFootprintSceneBounds(template, sourceMap, sceneX, sceneY);
 
         this.app.disable(PicoGL.DEPTH_TEST);
         this.app.disable(PicoGL.CULL_FACE);
+        this.app.enable(PicoGL.BLEND);
+        this.app.blendFunc(PicoGL.SRC_ALPHA, PicoGL.ONE_MINUS_SRC_ALPHA);
 
-        this.applyObjectSelectorHighlightUniforms();
-        this.highlightTileDrawCall.uniform("u_level", level);
+        const c = this.objectSelectorHoverColor;
+        this.highlightTileDrawCall.uniform("u_fillColor", [
+            c[0],
+            c[1],
+            c[2],
+            this.brushFill[3],
+        ]);
+        this.highlightTileDrawCall.uniform("u_outlineColor", [
+            c[0],
+            c[1],
+            c[2],
+            this.brushOutlineColor[3],
+        ]);
+        this.highlightTileDrawCall.uniform("u_outlineThickness", this.brushOutlineThickness);
+        this.highlightTileDrawCall.uniform("u_level", template.level);
+        this.highlightTileDrawCall.uniform("u_footprintPass", 0);
+        this.highlightTileDrawCall.uniform("u_boundarySegCount", 0);
+        this.highlightTileDrawCall.uniform("u_highlightShapeMode", 0);
         this.highlightTileDrawCall.uniform("u_mapX", map.mapX);
         this.highlightTileDrawCall.uniform("u_mapY", map.mapY);
         this.highlightTileDrawCall.texture("u_heightMap", map.heightMapTexture);
-        this.highlightTileDrawCall.uniform("u_edgeMask", [1, 1, 1, 1]);
-        this.highlightTileDrawCall.uniform("u_highlightShapeMode", 0);
-        this.highlightTileDrawCall.uniform("u_tileX", lx);
-        this.highlightTileDrawCall.uniform("u_tileY", ly);
-        this.highlightTileDrawCall.drawRanges(this.highlightFullTileRange);
-        this.highlightTileDrawCall.draw();
 
-        this.app.enable(PicoGL.DEPTH_TEST);
+        for (let sx = bounds.minX; sx <= bounds.maxX; sx++) {
+            for (let sy = bounds.minY; sy <= bounds.maxY; sy++) {
+                const lx = sx - map.borderSize;
+                const ly = sy - map.borderSize;
+                if (lx < 0 || lx >= 64 || ly < 0 || ly >= 64) {
+                    continue;
+                }
+
+                const edgeMask: [number, number, number, number] = [
+                    sx > bounds.minX ? 0 : 1,
+                    sx < bounds.maxX ? 0 : 1,
+                    sy > bounds.minY ? 0 : 1,
+                    sy < bounds.maxY ? 0 : 1,
+                ];
+
+                this.highlightTileDrawCall.uniform("u_edgeMask", edgeMask);
+                this.highlightTileDrawCall.uniform("u_tileX", lx);
+                this.highlightTileDrawCall.uniform("u_tileY", ly);
+                this.highlightTileDrawCall.drawRanges(this.highlightFullTileRange);
+                this.highlightTileDrawCall.draw();
+            }
+        }
+
         this.app.enable(PicoGL.CULL_FACE);
+        this.app.enable(PicoGL.DEPTH_TEST);
+    }
+
+    private ensureWireframeGpuBuffer(minFloats: number): void {
+        if (
+            this.wireframeGpuFormatVersion === WIREFRAME_GPU_FORMAT &&
+            minFloats <= this.wireframeGpuBufferFloats &&
+            this.objectWireframeDrawCall &&
+            this.objectWireframeVertexBuffer &&
+            this.objectWireframeVertexArray
+        ) {
+            return;
+        }
+
+        const capacity = Math.max(minFloats, 98304);
+        this.wireframeGpuBufferFloats = capacity;
+        this.wireframeGpuFormatVersion = WIREFRAME_GPU_FORMAT;
+        this.objectWireframeVertexBuffer = this.app.createVertexBuffer(
+            PicoGL.FLOAT,
+            4,
+            new Float32Array(capacity),
+            PicoGL.DYNAMIC_DRAW,
+        );
+        this.objectWireframeVertexArray = this.app
+            .createVertexArray()
+            .vertexAttributeBuffer(0, this.objectWireframeVertexBuffer, {
+                size: 3,
+                stride: WIREFRAME_VERTEX_STRIDE,
+                offset: 0,
+            })
+            .vertexAttributeBuffer(1, this.objectWireframeVertexBuffer, {
+                size: 1,
+                stride: WIREFRAME_VERTEX_STRIDE,
+                offset: 12,
+            });
+        this.objectWireframeDrawCall = this.app
+            .createDrawCall(this.objectWireframeProgram!, this.objectWireframeVertexArray)
+            .uniformBlock("SceneUniforms", this.sceneUniformBuffer!)
+            .primitive(PicoGL.TRIANGLES);
+    }
+
+    private resolveWireframeTriangles(
+        ref: EditorObjectRef,
+        map: EditorMapSquare,
+        locType: LocType,
+    ): Float32Array | undefined {
+        const { lines, cacheKey } = this.resolveWireframeLines(ref, map, locType);
+        if (lines.length === 0) {
+            return undefined;
+        }
+
+        const triKey = `sharp:${WIREFRAME_LINE_HALF_WIDTH}:${cacheKey}`;
+        let triangles = this.wireframeTriCache.get(triKey);
+        if (!triangles) {
+            triangles = expandWireframeLinesToTriangleMesh(lines);
+            this.wireframeTriCache.set(triKey, triangles);
+        }
+        if (triangles.length === 0) {
+            return undefined;
+        }
+
+        return triangles;
+    }
+
+    drawObjectWireframeMesh(
+        triangles: Float32Array,
+        color: vec4,
+        modelOffset: [number, number, number],
+        map: EditorMapSquare,
+        preserveAlpha = false,
+    ): void {
+        if (triangles.length === 0) {
+            return;
+        }
+
+        this.ensureWireframeGpuBuffer(triangles.length);
+        if (
+            !this.objectWireframeDrawCall ||
+            !this.objectWireframeVertexBuffer ||
+            !this.objectWireframeVertexArray
+        ) {
+            return;
+        }
+
+        const vertexCount = triangles.length / 4;
+        this.objectWireframeVertexBuffer.data(triangles);
+
+        this.objectWireframeDrawCall
+            .drawRanges(newDrawRange(0, vertexCount))
+            .uniform("u_modelOffset", modelOffset)
+            .uniform("u_mapPos", [map.mapX, map.mapY])
+            .uniform("u_color", [
+                color[0],
+                color[1],
+                color[2],
+                preserveAlpha ? color[3] : Math.min(1, Math.max(color[3], 0.95)),
+            ])
+            .draw();
+    }
+
+    private drawObjectWireframe(
+        ref: EditorObjectRef,
+        color: vec4,
+        fineOffset?: [number, number, number],
+        preserveAlpha = false,
+    ): void {
+        const locType = this.host.locTypeLoader.load(ref.locTypeId);
+        const map =
+            (this.mapManager.getMap(ref.mapX, ref.mapY) as EditorMapSquare | undefined) ??
+            (this.mapManager.getMapById(ref.mapId) as EditorMapSquare | undefined);
+        if (!map) {
+            return;
+        }
+
+        const triangles = this.resolveWireframeTriangles(ref, map, locType);
+        if (!triangles) {
+            return;
+        }
+
+        const baseOffset = getObjectSceneModelOffset(ref, map);
+        const modelOffset: [number, number, number] = fineOffset
+            ? [baseOffset[0] + fineOffset[0], baseOffset[1] + fineOffset[1], baseOffset[2] + fineOffset[2]]
+            : baseOffset;
+        this.drawObjectWireframeMesh(triangles, color, modelOffset, map, preserveAlpha);
+    }
+
+    private tryLoadWireframeModel(
+        locType: LocType,
+        type: number,
+        rotation: number,
+    ): WireframeModel | undefined {
+        const loaded = this.host.locModelLoader.getModel(locType, type as LocModelType, rotation);
+        if (loaded instanceof Model || loaded instanceof ModelData) {
+            return loaded;
+        }
+        return undefined;
+    }
+
+    private resolveWireframeModel(
+        locType: LocType,
+        ref: EditorObjectRef,
+        map: EditorMapSquare,
+    ): WireframeModel | undefined {
+        const loc = findLocForRef(map, ref);
+        if (loc?.entity instanceof Model) {
+            return loc.entity;
+        }
+
+        const candidates: [number, number][] = [];
+        if (loc) {
+            const params = resolveLocEntityModelParams(loc.flags, loc.entity);
+            candidates.push([params.type, params.rotation]);
+        }
+        candidates.push([ref.locModelType, ref.rotation]);
+
+        if (loc) {
+            const flagType = loc.flags & 0x3f;
+            const baseRot = rotationFromLocFlags(loc.flags);
+            candidates.push([flagType, baseRot]);
+            if (flagType === LocModelType.NORMAL) {
+                candidates.push([LocModelType.NORMAL, baseRot]);
+            } else if (flagType === LocModelType.NORMAL_DIAGIONAL) {
+                candidates.push([LocModelType.NORMAL, baseRot + 4]);
+            }
+            if (loc.entity instanceof LocEntity) {
+                candidates.push([loc.entity.type, loc.entity.rotation]);
+            }
+        }
+
+        const seen = new Set<string>();
+        for (const [type, rotation] of candidates) {
+            const key = `${type}:${rotation}`;
+            if (seen.has(key)) {
+                continue;
+            }
+            seen.add(key);
+            const model = this.tryLoadWireframeModel(locType, type, rotation);
+            if (model) {
+                return model;
+            }
+        }
+        return undefined;
+    }
+
+    private resolveWireframeLines(
+        ref: EditorObjectRef,
+        map: EditorMapSquare,
+        locType: LocType,
+    ): { lines: Float32Array; cacheKey: string } {
+        const loc = findLocForRef(map, ref);
+        const model = this.resolveWireframeModel(locType, ref, map);
+        const modelParams = loc ? resolveLocEntityModelParams(loc.flags, loc.entity) : undefined;
+        const cacheKey = model
+            ? `v6:balance:${ref.locTypeId}:${ref.locTag}:${modelParams?.type ?? ref.locModelType}:${modelParams?.rotation ?? ref.rotation}:${loc?.flags ?? 0}`
+            : loc
+              ? `v3:footprint:${ref.mapId}:${ref.level}:${loc.startX}:${loc.startY}:${loc.endX}:${loc.endY}:${loc.flags}`
+              : `v3:footprint:${ref.mapId}:${ref.level}:${ref.anchorTileX}:${ref.anchorTileY}`;
+
+        let lines = this.wireframeLineCache.get(cacheKey);
+        if (lines) {
+            return { lines, cacheKey };
+        }
+
+        if (model) {
+            lines = buildModelWireframeLines(model);
+            if (lines.length > 0) {
+                this.wireframeLineCache.set(cacheKey, lines);
+                return { lines, cacheKey };
+            }
+        }
+
+        if (loc) {
+            const width = (loc.endX - loc.startX + 1) * 128;
+            const depth = (loc.endY - loc.startY + 1) * 128;
+            const box = buildFootprintWireframeLines(width, depth);
+            const offsetX = loc.startX * 128 - loc.x;
+            const offsetZ = loc.startY * 128 - loc.y;
+            lines = offsetWireframeLines(box, offsetX, 0, offsetZ);
+        } else {
+            lines = buildFootprintWireframeLines(128, 128);
+        }
+        this.wireframeLineCache.set(cacheKey, lines);
+        return { lines, cacheKey };
     }
 
     private applyBrushHighlightUniforms(): void {
@@ -1891,7 +2540,11 @@ export class WebGLMapEditorRenderer extends MapEditorRenderer<EditorMapSquare> {
         if (!this.host.isEditorToolPluginEnabled(this.host.editorTool)) {
             return;
         }
-        if (this.host.editorTool === "object-selector") {
+        if (
+            this.host.editorTool === "object-selector" ||
+            this.host.editorTool === "object-delete" ||
+            this.host.editorTool === "region-stamp"
+        ) {
             return;
         }
         const inputManager = this.host.inputManager;
@@ -2258,6 +2911,22 @@ export class WebGLMapEditorRenderer extends MapEditorRenderer<EditorMapSquare> {
                         heightChangedTiles,
                     );
                     markObjectChunksForHeightEdit(map, chunkIds);
+                    syncMapObjectPickIndex(map, mapId);
+
+                    const selected = this.host.selectedObject;
+                    if (selected?.mapId === mapId) {
+                        const loc = findLocForRef(map, selected);
+                        if (loc) {
+                            this.host.setSelectedObject(syncObjectRefFromLoc(selected, loc));
+                        }
+                    }
+                    const hovered = this.host.hoveredObject;
+                    if (hovered?.mapId === mapId) {
+                        const loc = findLocForRef(map, hovered);
+                        if (loc) {
+                            this.host.setHoveredObject(syncObjectRefFromLoc(hovered, loc));
+                        }
+                    }
                 }
 
                 map.heightUpdated = false;

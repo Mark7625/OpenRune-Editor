@@ -38,6 +38,8 @@ const PANEL_RESTORE: { id: string; title: string }[] = [
     { id: "editor-height", title: "Height" },
     { id: "editor-tile-flags", title: "Tile flags" },
     { id: "editor-object-selector", title: "Objects" },
+    { id: "editor-object-delete", title: "Delete objects" },
+    { id: "editor-region-stamp", title: "Region stamp" },
     { id: "editor-brush-workspace", title: "Brush" },
     { id: "editor-history", title: "History" },
     { id: "editor-minimap", title: "Minimap" },

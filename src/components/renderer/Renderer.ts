@@ -17,6 +17,8 @@ function resizeCanvas(canvas: HTMLCanvasElement) {
 
 export abstract class Renderer {
     canvas: HTMLCanvasElement;
+    /** Optional 2D overlay drawn above the WebGL canvas (e.g. CPU wireframes). */
+    overlayCanvas?: HTMLCanvasElement;
     animationId: number | undefined;
     running: boolean = false;
 

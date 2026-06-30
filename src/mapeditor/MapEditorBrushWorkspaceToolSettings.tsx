@@ -101,6 +101,22 @@ export function MapEditorBrushWorkspaceToolSettings({
         );
     }
 
+    if (editorTool === "object-delete") {
+        return (
+            <p className="px-2 py-1 text-[11px] leading-snug text-muted-foreground">
+                Delete tool — hold Delete and hover objects to remove them.
+            </p>
+        );
+    }
+
+    if (editorTool === "region-stamp") {
+        return (
+            <p className="px-2 py-1 text-[11px] leading-snug text-muted-foreground">
+                Region stamp — drag to select · C opens copy options · live preview while placing · R rotate.
+            </p>
+        );
+    }
+
     return (
         <p className="px-2 py-1 text-[11px] leading-snug text-muted-foreground">
             No additional settings for this tool.

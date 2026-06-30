@@ -1,5 +1,5 @@
 import type { MapEditorPanelContextMenuItem } from "./MapEditorPanelContextMenu";
-import { buildMapEditorPanelPlacementMenuItems, buildPaintToolsPlacementMenuItems } from "./map-editor-panel-placement-menu";
+import { buildMapEditorPanelPlacementMenuItems, buildPaintToolsContextMenuItems } from "./map-editor-panel-placement-menu";
 import {
     getMapEditorPanelDisplay,
     isMapEditorFloatablePanel,
@@ -17,10 +17,7 @@ export function buildMapEditorDockTabMenuItems(
 ): MapEditorPanelContextMenuItem[] {
     if (panelId === "editor-paint-tools") {
         const model = getPaintToolsStripModel(host);
-        return buildPaintToolsPlacementMenuItems({
-            current: model.dockSide === "left" ? "docked" : "floating",
-            onSelect: (mode) => model.setDockSide(mode === "docked" ? "left" : "none"),
-        });
+        return buildPaintToolsContextMenuItems(model);
     }
 
     if (panelId === "editor-brush-workspace") {

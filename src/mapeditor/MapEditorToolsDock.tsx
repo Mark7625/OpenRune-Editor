@@ -29,6 +29,8 @@ import {
     BUILTIN_EDITOR_VIEW_STICKY_NAV_PLUGINS,
     heightEditorTool,
     objectSelectorEditorTool,
+    objectDeleteEditorTool,
+    regionStampEditorTool,
     overlayEditorTool,
     tileFlagsEditorTool,
     underlayEditorTool,
@@ -47,7 +49,8 @@ import { SquareArrowOutUpRight } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../components/ui/tooltip";
 import { useMapEditorPanelContextMenu } from "./MapEditorPanelContextMenu";
-import { buildMapEditorPanelPlacementMenuItems } from "./map-editor-panel-placement-menu";
+import { buildPaintToolsContextMenuItems } from "./map-editor-panel-placement-menu";
+import { getPaintToolsStripModel } from "./plugins/builtins/paint-tools-strip-model";
 import { syncEditorBottomBarExternalWindow, getEditorBottomBarModel } from "./plugins/builtins/editor-bottom-bar-model";
 import { EditorPaintControlsPluginPanel } from "./plugins/builtins/paint-controls.plugin";
 import { SandboxTerrainWorkspacePanel } from "./SandboxTerrainWorkspacePanel";
@@ -246,6 +249,16 @@ const EditorObjectSelectorPalettePanel = createToolPaletteDockPanel(
     "Objects",
     objectSelectorEditorTool.palettePanel!,
 );
+const EditorObjectDeletePalettePanel = createToolPaletteDockPanel(
+    "editor-object-delete",
+    "Delete objects",
+    objectDeleteEditorTool.palettePanel!,
+);
+const EditorRegionStampPalettePanel = createToolPaletteDockPanel(
+    "editor-region-stamp",
+    "Region stamp",
+    regionStampEditorTool.palettePanel!,
+);
 const EditorTileFlagsPalettePanel = createToolPaletteDockPanel(
     "editor-tile-flags",
     "Tile flags",
@@ -270,17 +283,48 @@ const EditorPaintToolsPanel = memo(function EditorPaintToolsPanel(_props: IDockv
         );
     }
 
+    const model = getPaintToolsStripModel(pluginHost);
+    const getMenuItems = useCallback(() => buildPaintToolsContextMenuItems(model), [model]);
+    const { onContextMenu, menuPortal } = useMapEditorPanelContextMenu(
+        "map-editor-dock-paint-tools-menu",
+        "Paint tools",
+        getMenuItems,
+    );
+
     return (
-        <div className={mapEditorDockPanelFrameClassName("items-center justify-start p-1")}>
-            <div className="flex h-full min-h-0 w-full flex-col items-center overflow-hidden">
-                <EditorPaintControlsPluginPanel
-                    pluginHost={pluginHost}
-                    orientation="vertical"
-                    compact
-                    scrollable={false}
-                />
+        <TooltipProvider delayDuration={300}>
+            <div
+                className={mapEditorDockPanelFrameClassName("items-center justify-start p-1")}
+                onContextMenu={onContextMenu}
+            >
+                {menuPortal}
+                <div className="flex h-full min-h-0 w-full flex-col items-center gap-0.5 overflow-hidden">
+                    <Tooltip>
+                        <TooltipTrigger asChild>
+                            <Button
+                                type="button"
+                                size="icon"
+                                variant="ghost"
+                                className="size-7 shrink-0"
+                                aria-label="Undock paint tools"
+                                onClick={() => model.setDockSide("none")}
+                            >
+                                <SquareArrowOutUpRight className="size-3.5" aria-hidden />
+                            </Button>
+                        </TooltipTrigger>
+                        <TooltipContent side="right" className="text-xs">
+                            Undock (right-click for more)
+                        </TooltipContent>
+                    </Tooltip>
+                    <EditorPaintControlsPluginPanel
+                        pluginHost={pluginHost}
+                        orientation="vertical"
+                        compact
+                        scrollable={false}
+                    />
+                </div>
             </div>
-        </div>
+        </TooltipProvider>
     );
 });
 
@@ -421,6 +465,8 @@ export function MapEditorToolsDock({ pluginHost, onDockReady }: MapEditorToolsDo
             overlayPalette: EditorOverlayPalettePanel,
             heightPalette: EditorHeightPalettePanel,
             objectSelectorPalette: EditorObjectSelectorPalettePanel,
+            objectDeletePalette: EditorObjectDeletePalettePanel,
+            regionStampPalette: EditorRegionStampPalettePanel,
             tileFlagsPalette: EditorTileFlagsPalettePanel,
             smoothPalette: EditorSmoothPalettePanel,
             paintTools: EditorPaintToolsPanel,

@@ -10,7 +10,7 @@ import { GripHorizontal, GripVertical } from "lucide-react";
 import { TooltipProvider } from "../components/ui/tooltip";
 import { cn } from "../util/cn";
 import { useMapEditorPanelContextMenu } from "./MapEditorPanelContextMenu";
-import { buildPaintToolsPlacementMenuItems } from "./map-editor-panel-placement-menu";
+import { buildPaintToolsContextMenuItems } from "./map-editor-panel-placement-menu";
 import { mapEditorStripChrome } from "./map-editor-workbench-chrome";
 import type { IEditorPluginHost } from "./plugins/editor-plugin-host";
 import { EditorPaintControlsPluginPanel } from "./plugins/builtins/paint-controls.plugin";
@@ -58,14 +58,7 @@ export const MapEditorFloatingPaintToolsPanel = memo(function MapEditorFloatingP
         disabled: !visible,
     });
 
-    const getMenuItems = useCallback(
-        () =>
-            buildPaintToolsPlacementMenuItems({
-                current: model.dockSide === "left" ? "docked" : "floating",
-                onSelect: (mode) => model.setDockSide(mode === "docked" ? "left" : "none"),
-            }),
-        [model],
-    );
+    const getMenuItems = useCallback(() => buildPaintToolsContextMenuItems(model), [model]);
     const { onContextMenu, menuPortal } = useMapEditorPanelContextMenu(
         "map-editor-paint-tools-context-menu",
         "Paint tools",

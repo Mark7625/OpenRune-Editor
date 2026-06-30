@@ -124,12 +124,19 @@ export interface IEditorPluginHost extends EditorRsConfigServices, EditorRuntime
     getHistorySnapshot(): import("../map-editor-history").MapEditorHistorySnapshot;
     beginHistoryStroke(tool: import("../map-editor-history").MapEditorHistoryTool, label?: string): void;
     commitHistoryStroke(): void;
+    cancelHistoryStroke(): void;
     recordHistoryTileChange(
         mapId: number,
         level: number,
         localTileId: number,
         before: import("../map-editor-history").TileFieldSnapshot,
         after: import("../map-editor-history").TileFieldSnapshot,
+    ): void;
+    recordHistoryObjectChange(
+        mapId: number,
+        level: number,
+        before: import("../webgl/sceneLocData").SceneTileLocData[],
+        after: import("../webgl/sceneLocData").SceneTileLocData[],
     ): void;
     isHistoryApplying(): boolean;
     undoHistory(): void;
@@ -217,12 +224,39 @@ export interface IEditorPluginHost extends EditorRsConfigServices, EditorRuntime
     paintMouseButton: "left" | "right";
     objectsVisible: boolean;
     isObjectSelectorToolActive(): boolean;
+    isObjectDeleteToolActive(): boolean;
+    isRegionStampToolActive(): boolean;
+    getRegionStampSelectBounds(): import("./builtins/region-stamp-types").WorldTileBounds | undefined;
+    getRegionStampDraftBounds(): import("./builtins/region-stamp-types").WorldTileBounds | undefined;
+    isRegionStampPlacementActive(): boolean;
+    getRegionStampRotation(): number;
+    getRegionStampClipboard(): import("./builtins/region-stamp-types").RegionStamp | undefined;
+    isRegionStampCopyDialogOpen(): boolean;
+    getRegionStampCopyOptions(): import("./builtins/region-stamp-copy-options").RegionStampCopyOptions;
+    openRegionStampCopyDialog(): void;
+    cancelRegionStampCopyDialog(): void;
+    confirmRegionStampCopy(options: import("./builtins/region-stamp-copy-options").RegionStampCopyOptions): void;
+    updateRegionStampDrag(anchorWorldX: number, anchorWorldY: number, worldX: number, worldY: number): void;
+    finishRegionStampDrag(anchorWorldX: number, anchorWorldY: number, worldX: number, worldY: number): void;
+    clearRegionStampSelection(): void;
+    copyRegionStampSelection(): void;
+    cancelRegionStampPlacement(): void;
+    rotateRegionStamp(): void;
+    deleteRegionStampSelection(): boolean;
+    pasteRegionStampAt(worldX: number, worldY: number): boolean;
     getTilePickLevel(): number;
     hoveredObject?: import("../webgl/sceneLocPicker").EditorObjectRef;
     selectedObject?: import("../webgl/sceneLocPicker").EditorObjectRef;
     setHoveredObject(ref: import("../webgl/sceneLocPicker").EditorObjectRef | undefined): void;
     setSelectedObject(ref: import("../webgl/sceneLocPicker").EditorObjectRef | undefined): void;
     clearSelectedObject(): void;
+    rotateSelectedObject(): boolean;
+    isObjectDeleteModeActive(): boolean;
+    deleteHoveredObject(): boolean;
+    isObjectCopyPlacementActive(): boolean;
+    getObjectCopyTemplate(): import("../webgl/sceneLocPicker").EditorObjectRef | undefined;
+    startObjectCopyPlacement(): boolean;
+    cancelObjectCopyPlacement(): void;
     terrainSmoothingEnabled: boolean;
     viewMode: MapEditorViewMode;
     sandboxModeActive: boolean;
@@ -428,6 +462,9 @@ export class EditorPluginHost implements IEditorPluginHost {
     commitHistoryStroke = (): void => {
         this._e.commitHistoryStroke();
     };
+    cancelHistoryStroke = (): void => {
+        this._e.cancelHistoryStroke();
+    };
     recordHistoryTileChange = (
         mapId: number,
         level: number,
@@ -436,6 +473,14 @@ export class EditorPluginHost implements IEditorPluginHost {
         after: import("../map-editor-history").TileFieldSnapshot,
     ): void => {
         this._e.recordHistoryTileChange(mapId, level, localTileId, before, after);
+    };
+    recordHistoryObjectChange = (
+        mapId: number,
+        level: number,
+        before: import("../webgl/sceneLocData").SceneTileLocData[],
+        after: import("../webgl/sceneLocData").SceneTileLocData[],
+    ): void => {
+        this._e.recordHistoryObjectChange(mapId, level, before, after);
     };
     isHistoryApplying = (): boolean => {
         return this._e.isHistoryApplying();
@@ -677,6 +722,66 @@ export class EditorPluginHost implements IEditorPluginHost {
     isObjectSelectorToolActive(): boolean {
         return this._e.isObjectSelectorToolActive();
     }
+    isObjectDeleteToolActive(): boolean {
+        return this._e.isObjectDeleteToolActive();
+    }
+    isRegionStampToolActive(): boolean {
+        return this._e.isRegionStampToolActive();
+    }
+    getRegionStampSelectBounds(): import("./builtins/region-stamp-types").WorldTileBounds | undefined {
+        return this._e.getRegionStampSelectBounds();
+    }
+    getRegionStampDraftBounds(): import("./builtins/region-stamp-types").WorldTileBounds | undefined {
+        return this._e.getRegionStampDraftBounds();
+    }
+    isRegionStampPlacementActive(): boolean {
+        return this._e.isRegionStampPlacementActive();
+    }
+    getRegionStampRotation(): number {
+        return this._e.getRegionStampRotation();
+    }
+    getRegionStampClipboard(): import("./builtins/region-stamp-types").RegionStamp | undefined {
+        return this._e.getRegionStampClipboard();
+    }
+    isRegionStampCopyDialogOpen(): boolean {
+        return this._e.isRegionStampCopyDialogOpen();
+    }
+    getRegionStampCopyOptions(): import("./builtins/region-stamp-copy-options").RegionStampCopyOptions {
+        return this._e.getRegionStampCopyOptions();
+    }
+    openRegionStampCopyDialog(): void {
+        this._e.openRegionStampCopyDialog();
+    }
+    cancelRegionStampCopyDialog(): void {
+        this._e.cancelRegionStampCopyDialog();
+    }
+    confirmRegionStampCopy(options: import("./builtins/region-stamp-copy-options").RegionStampCopyOptions): void {
+        this._e.confirmRegionStampCopy(options);
+    }
+    updateRegionStampDrag(anchorWorldX: number, anchorWorldY: number, worldX: number, worldY: number): void {
+        this._e.updateRegionStampDrag(anchorWorldX, anchorWorldY, worldX, worldY);
+    }
+    finishRegionStampDrag(anchorWorldX: number, anchorWorldY: number, worldX: number, worldY: number): void {
+        this._e.finishRegionStampDrag(anchorWorldX, anchorWorldY, worldX, worldY);
+    }
+    clearRegionStampSelection(): void {
+        this._e.clearRegionStampSelection();
+    }
+    copyRegionStampSelection(): void {
+        this._e.copyRegionStampSelection();
+    }
+    cancelRegionStampPlacement(): void {
+        this._e.cancelRegionStampPlacement();
+    }
+    rotateRegionStamp(): void {
+        this._e.rotateRegionStamp();
+    }
+    deleteRegionStampSelection(): boolean {
+        return this._e.deleteRegionStampSelection();
+    }
+    pasteRegionStampAt(worldX: number, worldY: number): boolean {
+        return this._e.pasteRegionStampAt(worldX, worldY);
+    }
 
     getTilePickLevel(): number {
         return this._e.getTilePickLevel();
@@ -701,6 +806,27 @@ export class EditorPluginHost implements IEditorPluginHost {
     clearSelectedObject(): void {
         this._e.clearSelectedObject();
         this._e.notifyWorkbenchStateChanged();
+    }
+    rotateSelectedObject(): boolean {
+        return this._e.rotateSelectedObject();
+    }
+    isObjectDeleteModeActive(): boolean {
+        return this._e.isObjectDeleteModeActive();
+    }
+    deleteHoveredObject(): boolean {
+        return this._e.deleteHoveredObject();
+    }
+    isObjectCopyPlacementActive(): boolean {
+        return this._e.isObjectCopyPlacementActive();
+    }
+    getObjectCopyTemplate(): import("../webgl/sceneLocPicker").EditorObjectRef | undefined {
+        return this._e.getObjectCopyTemplate();
+    }
+    startObjectCopyPlacement(): boolean {
+        return this._e.startObjectCopyPlacement();
+    }
+    cancelObjectCopyPlacement(): void {
+        this._e.cancelObjectCopyPlacement();
     }
     get terrainSmoothingEnabled(): boolean {
         return this._e.terrainSmoothingEnabled;

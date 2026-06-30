@@ -1,7 +1,8 @@
-import { ExternalLink, PanelBottom, PanelLeft, PictureInPicture2 } from "lucide-react";
+import { Columns3, ExternalLink, PanelBottom, PanelLeft, PictureInPicture2, Rows3 } from "lucide-react";
 
 import type { MapEditorPanelContextMenuItem } from "./MapEditorPanelContextMenu";
 import type { MapEditorPanelPlacement } from "./map-editor-panel-display";
+import type { PaintToolsStripModel } from "./plugins/builtins/paint-tools-strip-model";
 
 export function buildMapEditorPanelPlacementMenuItems(options: {
     title: string;
@@ -66,4 +67,34 @@ export function buildPaintToolsPlacementMenuItems(options: {
             onSelect: () => options.onSelect("floating"),
         },
     ];
+}
+
+/** Full paint-tools strip menu: placement, undock, and layout orientation (floating only). */
+export function buildPaintToolsContextMenuItems(model: PaintToolsStripModel): MapEditorPanelContextMenuItem[] {
+    const isDocked = model.dockSide === "left";
+    const items: MapEditorPanelContextMenuItem[] = [
+        {
+            id: "dock-left",
+            label: "Dock to left",
+            icon: <PanelLeft className="size-4" />,
+            disabled: isDocked,
+            onSelect: () => model.setDockSide("left"),
+        },
+        {
+            id: "float",
+            label: "Float over workbench",
+            icon: <PictureInPicture2 className="size-4" />,
+            disabled: !isDocked,
+            onSelect: () => model.setDockSide("none"),
+        },
+    ];
+    if (!isDocked) {
+        items.push({
+            id: "toggle-orientation",
+            label: model.orientation === "vertical" ? "Horizontal layout" : "Vertical layout",
+            icon: model.orientation === "vertical" ? <Columns3 className="size-4" /> : <Rows3 className="size-4" />,
+            onSelect: () => model.toggleOrientation(),
+        });
+    }
+    return items;
 }

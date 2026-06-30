@@ -1,5 +1,6 @@
 import type { MapEditorTool } from "./map-editor-kinds";
 import { overlayWorldKey } from "./overlay-flood-fill";
+import type { SceneTileLocData } from "./webgl/sceneLocData";
 
 /** Sparse per-tile terrain fields (only changed keys are stored). */
 export type TileFieldSnapshot = {
@@ -19,6 +20,13 @@ export type MapSquareTileDelta = {
     tiles: [localTileId: number, before: TileFieldSnapshot, after: TileFieldSnapshot][];
 };
 
+export type MapSquareObjectDelta = {
+    mapId: number;
+    level: number;
+    before: SceneTileLocData[];
+    after: SceneTileLocData[];
+};
+
 export type MapEditorHistoryTool = MapEditorTool | "sandbox" | "bulk";
 
 export type MapEditorHistoryEntry = {
@@ -27,6 +35,7 @@ export type MapEditorHistoryEntry = {
     tool: MapEditorHistoryTool;
     timestamp: number;
     deltas: MapSquareTileDelta[];
+    objectDeltas: MapSquareObjectDelta[];
     mapIds: number[];
     tileCount: number;
 };
@@ -177,6 +186,10 @@ export function toolHistoryLabel(tool: MapEditorHistoryTool, custom?: string): s
             return "Edit tile flags";
         case "object-selector":
             return "Object edit";
+        case "object-delete":
+            return "Delete object";
+        case "region-stamp":
+            return "Region stamp";
         case "sandbox":
             return "Sandbox terrain";
         case "bulk":
@@ -199,6 +212,7 @@ export class MapEditHistory {
         PendingTileKey,
         { mapId: number; level: number; localTileId: number; before: TileFieldSnapshot; after: TileFieldSnapshot }
     >();
+    private pendingObjectChanges: MapSquareObjectDelta[] = [];
 
     /** When true, tile mutations from history replay are not recorded. */
     applying = false;
@@ -250,6 +264,7 @@ export class MapEditHistory {
         this.strokeTool = tool;
         this.strokeLabel = label;
         this.pendingTiles.clear();
+        this.pendingObjectChanges = [];
     }
 
     recordTileChange(
@@ -268,25 +283,47 @@ export class MapEditHistory {
         mergePendingTile(this.pendingTiles, mapId, level, localTileId, before, after);
     }
 
+    recordObjectChange(
+        mapId: number,
+        level: number,
+        before: SceneTileLocData[],
+        after: SceneTileLocData[],
+    ): void {
+        if (this.applying) {
+            return;
+        }
+        if (!this.strokeActive) {
+            this.beginStroke(this.strokeTool);
+        }
+        if (JSON.stringify(before) === JSON.stringify(after)) {
+            return;
+        }
+        this.pendingObjectChanges.push({
+            mapId,
+            level,
+            before: before.map((entry) => structuredClone(entry)),
+            after: after.map((entry) => structuredClone(entry)),
+        });
+    }
+
     commitStroke(): void {
         if (this.applying || !this.strokeActive) {
             this.strokeActive = false;
             this.pendingTiles.clear();
+            this.pendingObjectChanges = [];
             return;
         }
         this.strokeActive = false;
-        if (this.pendingTiles.size === 0) {
-            this.pendingTiles.clear();
-            return;
-        }
 
         const deltas = buildDeltasFromPending(this.pendingTiles);
+        const objectDeltas = this.pendingObjectChanges;
         this.pendingTiles.clear();
-        if (deltas.length === 0) {
+        this.pendingObjectChanges = [];
+        if (deltas.length === 0 && objectDeltas.length === 0) {
             return;
         }
 
-        const mapIds = [...new Set(deltas.map((d) => d.mapId))];
+        const mapIds = [...new Set([...deltas.map((d) => d.mapId), ...objectDeltas.map((d) => d.mapId)])];
         let tileCount = 0;
         for (const delta of deltas) {
             tileCount += delta.tiles.length;
@@ -302,6 +339,7 @@ export class MapEditHistory {
             tool: this.strokeTool,
             timestamp: Date.now(),
             deltas,
+            objectDeltas,
             mapIds,
             tileCount,
         };
@@ -313,6 +351,7 @@ export class MapEditHistory {
     cancelStroke(): void {
         this.strokeActive = false;
         this.pendingTiles.clear();
+        this.pendingObjectChanges = [];
     }
 
     getUndoEntry(): MapEditorHistoryEntry | undefined {
@@ -364,6 +403,7 @@ export class MapEditHistory {
         this.entries = [];
         this.currentIndex = -1;
         this.pendingTiles.clear();
+        this.pendingObjectChanges = [];
         this.strokeActive = false;
         this.notify();
     }
