@@ -14,6 +14,26 @@ import {
     type SceneTileLocData,
 } from "./sceneLocData";
 
+/** Upper-plane tile draws when viewing the plane below (bridge on L1, render-Z on L+1). */
+function tileRendersOnPlaneBelow(
+    scene: Scene,
+    upperPlane: number,
+    sceneTileX: number,
+    sceneTileY: number,
+): boolean {
+    if (upperPlane <= 0 || upperPlane >= Scene.MAX_LEVELS) {
+        return false;
+    }
+    const flags = scene.tileRenderFlags[upperPlane]?.[sceneTileX]?.[sceneTileY] ?? 0;
+    if ((flags & 0x8) !== 0) {
+        return true;
+    }
+    if (upperPlane === 1 && (flags & 0x2) !== 0) {
+        return true;
+    }
+    return false;
+}
+
 export type EditorObjectKind = "loc" | "wall" | "floorDecoration" | "wallDecoration";
 
 export type EditorObjectRef = {
@@ -673,9 +693,10 @@ export function getObjectPickLevelsAt(
     for (let level = 0; level < Scene.MAX_LEVELS; level++) {
         if (hideBelowViewPlane) {
             if (level < max) {
-                continue;
-            }
-            if (!scene.isPlayerLevel(level, sceneTileX, sceneTileY, max)) {
+                if (!(level === max - 1 && tileRendersOnPlaneBelow(scene, max, sceneTileX, sceneTileY))) {
+                    continue;
+                }
+            } else if (!scene.isPlayerLevel(level, sceneTileX, sceneTileY, max)) {
                 continue;
             }
             levels.add(level);
@@ -690,7 +711,8 @@ export function getObjectPickLevelsAt(
         if (
             level === max + 1 &&
             max < Scene.MAX_LEVELS - 1 &&
-            scene.isPlayerLevel(level, sceneTileX, sceneTileY, max)
+            (tileRendersOnPlaneBelow(scene, level, sceneTileX, sceneTileY) ||
+                scene.isPlayerLevel(level, sceneTileX, sceneTileY, max))
         ) {
             levels.add(level);
         }

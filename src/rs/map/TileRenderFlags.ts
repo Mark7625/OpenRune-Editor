@@ -106,3 +106,130 @@ export function shouldShowTileRenderFlag(
 ): boolean {
     return showFlags.has(flag) && hasTileRenderFlag(value, flag);
 }
+
+function readTileRenderFlagAt(
+    tileRenderFlags: Uint8Array[][],
+    level: number,
+    sceneX: number,
+    sceneY: number,
+): number {
+    if (level < 0 || level >= tileRenderFlags.length) {
+        return 0;
+    }
+    const row = tileRenderFlags[level][sceneX];
+    if (!row) {
+        return 0;
+    }
+    return row[sceneY] ?? 0;
+}
+
+/**
+ * OSRS bridge / render-Z bits on plane 1 (and render-Z on plane N+1) describe how **lower** planes
+ * behave. Overlays show them on the plane you are editing, not duplicated on the storage plane.
+ */
+export function isTileRenderFlagActiveForView(
+    tileRenderFlags: Uint8Array[][],
+    sceneX: number,
+    sceneY: number,
+    viewLevel: number,
+    flag: TileRenderFlag,
+): boolean {
+    const at = (level: number) => readTileRenderFlagAt(tileRenderFlags, level, sceneX, sceneY);
+    const hasAt = (level: number) => hasTileRenderFlag(at(level), flag);
+
+    switch (flag) {
+        case TileRenderFlag.BRIDGE_TILE:
+            if (viewLevel === 0) {
+                return hasAt(0) || hasAt(1);
+            }
+            if (viewLevel === 1) {
+                return false;
+            }
+            return hasAt(viewLevel);
+        case TileRenderFlag.RENDER_ON_LOWER_Z:
+            if (viewLevel === 0) {
+                return hasAt(0) || hasAt(1);
+            }
+            return hasAt(viewLevel + 1);
+        default:
+            return hasAt(viewLevel);
+    }
+}
+
+export function shouldShowTileRenderFlagForView(
+    tileRenderFlags: Uint8Array[][],
+    sceneX: number,
+    sceneY: number,
+    viewLevel: number,
+    flag: TileRenderFlag,
+    showFlags: ReadonlySet<TileRenderFlag>,
+): boolean {
+    return showFlags.has(flag) && isTileRenderFlagActiveForView(tileRenderFlags, sceneX, sceneY, viewLevel, flag);
+}
+
+/** Height plane for flag overlays (bridge / render-Z often live on the plane above the viewed plane). */
+export function tileRenderFlagOverlayDrawLevel(
+    tileRenderFlags: Uint8Array[][],
+    sceneX: number,
+    sceneY: number,
+    viewLevel: number,
+    flag: TileRenderFlag,
+): number {
+    const at = (level: number) => readTileRenderFlagAt(tileRenderFlags, level, sceneX, sceneY);
+    const hasAt = (level: number) => hasTileRenderFlag(at(level), flag);
+
+    switch (flag) {
+        case TileRenderFlag.BRIDGE_TILE:
+            if (viewLevel === 0 && hasAt(1)) {
+                return 1;
+            }
+            return viewLevel;
+        case TileRenderFlag.RENDER_ON_LOWER_Z:
+            if (viewLevel === 0 && hasAt(1)) {
+                return 1;
+            }
+            if (hasAt(viewLevel + 1)) {
+                return viewLevel + 1;
+            }
+            return viewLevel;
+        default:
+            return viewLevel;
+    }
+}
+
+export function formatTileRenderFlagsForView(
+    tileRenderFlags: Uint8Array[][],
+    sceneX: number,
+    sceneY: number,
+    viewLevel: number,
+): string {
+    const active = TILE_RENDER_FLAG_DESCRIPTORS.filter((d) =>
+        isTileRenderFlagActiveForView(tileRenderFlags, sceneX, sceneY, viewLevel, d.flag),
+    ).map((d) => d.shortLabel);
+    if (active.length === 0) {
+        return "None";
+    }
+    return active.join(", ");
+}
+
+export function tileRenderFlagValueLabelForView(
+    tileRenderFlags: Uint8Array[][],
+    sceneX: number,
+    sceneY: number,
+    viewLevel: number,
+): string {
+    const onPlane = readTileRenderFlagAt(tileRenderFlags, viewLevel, sceneX, sceneY);
+    const parts = [`L${viewLevel}=${onPlane}`];
+    if (viewLevel === 0) {
+        const onPlane1 = readTileRenderFlagAt(tileRenderFlags, 1, sceneX, sceneY);
+        if (onPlane1 !== 0) {
+            parts.push(`L1=${onPlane1}`);
+        }
+    } else if (viewLevel >= 1) {
+        const onAbove = readTileRenderFlagAt(tileRenderFlags, viewLevel + 1, sceneX, sceneY);
+        if (onAbove !== 0) {
+            parts.push(`L${viewLevel + 1}=${onAbove}`);
+        }
+    }
+    return parts.join(" · ");
+}

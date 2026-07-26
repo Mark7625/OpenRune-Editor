@@ -388,10 +388,10 @@ export class SceneBuilder {
                 const sceneY = localY + offsetY;
 
                 if (
-                    sceneX > 0 &&
-                    sceneY > 0 &&
-                    sceneX < scene.sizeX - 1 &&
-                    sceneY < scene.sizeY - 1
+                    sceneX >= 0 &&
+                    sceneY >= 0 &&
+                    sceneX < scene.sizeX &&
+                    sceneY < scene.sizeY
                 ) {
                     let transformedLevel = level;
                     if ((scene.tileRenderFlags[1][sceneX][sceneY] & 2) === 2) {

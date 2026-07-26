@@ -1,4 +1,5 @@
-import { applyTileRenderFlags, hasTileRenderFlag } from "../../../rs/map/TileRenderFlags";
+import { applyTileRenderFlags, hasTileRenderFlag, TileRenderFlag } from "../../../rs/map/TileRenderFlags";
+import { Scene } from "../../../rs/scene/Scene";
 import { recordHistoryTileMutation } from "../../map-editor-history-record";
 import type { EditorMapSquare } from "../../webgl/EditorMapSquare";
 import type { WebGLMapEditorRenderer } from "../../webgl/WebGLMapEditorRenderer";
@@ -6,6 +7,56 @@ import { getTileFlagsToolModel } from "./tile-flags-tool-model";
 
 function tileFlagsPaintKey(mapId: number, sceneX: number, sceneY: number, level: number): string {
     return `${mapId}:${level}:${sceneX}:${sceneY}`;
+}
+
+/** OSRS stores bridge / render-Z on plane 1; mirror when painting from ground. */
+function storageLevelsForPaint(selectedLevel: number, paintFlags: ReadonlySet<TileRenderFlag>): number[] {
+    const levels = [selectedLevel];
+    if (selectedLevel === 0 && Scene.MAX_LEVELS > 1) {
+        for (const flag of paintFlags) {
+            if (flag === TileRenderFlag.BRIDGE_TILE || flag === TileRenderFlag.RENDER_ON_LOWER_Z) {
+                levels.push(1);
+                break;
+            }
+        }
+    }
+    return levels;
+}
+
+function applyFlagsAt(
+    renderer: WebGLMapEditorRenderer,
+    map: EditorMapSquare,
+    level: number,
+    sceneX: number,
+    sceneY: number,
+    paintFlags: ReadonlySet<TileRenderFlag>,
+    removeMode: boolean,
+): boolean {
+    const scene = map.scene;
+    const current = scene.tileRenderFlags[level][sceneX][sceneY] ?? 0;
+
+    if (!removeMode) {
+        let allPaintFlagsSet = true;
+        for (const flag of paintFlags) {
+            if (!hasTileRenderFlag(current, flag)) {
+                allPaintFlagsSet = false;
+                break;
+            }
+        }
+        if (allPaintFlagsSet) {
+            return false;
+        }
+    }
+
+    const next = applyTileRenderFlags(current, paintFlags, removeMode);
+    if (next === current) {
+        return false;
+    }
+
+    recordHistoryTileMutation(renderer.host, map, level, sceneX, sceneY, () => {
+        scene.tileRenderFlags[level][sceneX][sceneY] = next;
+    });
+    return true;
 }
 
 export function applyTileRenderFlagsRuntime(
@@ -19,7 +70,8 @@ export function applyTileRenderFlagsRuntime(
         return;
     }
 
-    const level = renderer.host.selectedLevel;
+    const selectedLevel = renderer.host.selectedLevel;
+    const targetLevels = storageLevelsForPaint(selectedLevel, paintFlags);
 
     for (const [mapId, tileIds] of hoveredTilesMap) {
         const map = renderer.mapManager.getMapById(mapId);
@@ -37,35 +89,21 @@ export function applyTileRenderFlagsRuntime(
                 continue;
             }
 
-            const paintKey = tileFlagsPaintKey(mapId, sceneX, sceneY, level);
+            const paintKey = tileFlagsPaintKey(mapId, sceneX, sceneY, selectedLevel);
             if (paintedKeys.has(paintKey)) {
                 continue;
             }
             paintedKeys.add(paintKey);
 
-            const current = scene.tileRenderFlags[level][sceneX][sceneY] ?? 0;
-
-            if (!removeMode) {
-                let allPaintFlagsSet = true;
-                for (const flag of paintFlags) {
-                    if (!hasTileRenderFlag(current, flag)) {
-                        allPaintFlagsSet = false;
-                        break;
-                    }
-                }
-                if (allPaintFlagsSet) {
-                    continue;
+            let tileChanged = false;
+            for (const level of targetLevels) {
+                if (applyFlagsAt(renderer, map, level, sceneX, sceneY, paintFlags, removeMode)) {
+                    tileChanged = true;
                 }
             }
-
-            const next = applyTileRenderFlags(current, paintFlags, removeMode);
-            if (next === current) {
+            if (!tileChanged) {
                 continue;
             }
-
-            recordHistoryTileMutation(renderer.host, map as EditorMapSquare, level, sceneX, sceneY, () => {
-                scene.tileRenderFlags[level][sceneX][sceneY] = next;
-            });
             mapChanged = true;
 
             const tileX = sceneX - map.borderSize;

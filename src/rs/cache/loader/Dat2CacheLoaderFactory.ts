@@ -56,6 +56,7 @@ import { TextureLoader } from "../../texture/TextureLoader";
 import { ApiType } from "../ApiType";
 import { CacheIndex } from "../CacheIndex";
 import { CacheInfo } from "../CacheInfo";
+import { MAP_XTEA_OBSOLETE_FROM_REVISION } from "../map-xtea";
 import { CacheSystem } from "../CacheSystem";
 import { CacheType } from "../CacheType";
 import { ConfigType } from "../ConfigType";
@@ -220,7 +221,10 @@ export class Dat2CacheLoaderFactory implements CacheLoaderFactory {
 
     getMapFileLoader(): MapFileLoader {
         const mapIndex = this.cacheSystem.getIndex(IndexType.DAT2.maps);
-        if (this.cacheInfo.game === "oldschool" && this.cacheInfo.revision >= 237) {
+        if (
+            this.cacheInfo.game === "oldschool" &&
+            this.cacheInfo.revision >= MAP_XTEA_OBSOLETE_FROM_REVISION
+        ) {
             const mapFileIndex = new ModernMapFileIndex(mapIndex);
             return new ModernMapFileLoader(mapIndex, mapFileIndex);
         }

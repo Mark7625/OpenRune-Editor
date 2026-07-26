@@ -386,7 +386,10 @@ export function CacheRepositoryPage() {
         className="sr-only"
         multiple
         {...({ webkitdirectory: "" } as InputHTMLAttributes<HTMLInputElement>)}
-        onChange={(e) => void onFolderPicked(e.target.files)}
+        onChange={(e) => {
+          void onFolderPicked(e.target.files);
+          e.target.value = "";
+        }}
       />
       <ConfirmationDialog
         open={pendingSwitchProfileId !== null}

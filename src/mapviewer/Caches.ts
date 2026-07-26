@@ -1,5 +1,6 @@
 import { CacheFiles, ProgressListener } from "../rs/cache/CacheFiles";
 import { CacheInfo, getLatestCache } from "../rs/cache/CacheInfo";
+import { cacheRequiresMapXteas, parseXteaMapFromJsonText, type XteaMap } from "../rs/cache/map-xtea";
 import { CacheType, detectCacheType } from "../rs/cache/CacheType";
 
 const CACHE_PATH = "/caches/";
@@ -26,6 +27,8 @@ export async function fetchCacheList(): Promise<CacheList | undefined> {
     };
 }
 
+export type { XteaMap } from "../rs/cache/map-xtea";
+
 export type LoadedCache = {
     info: CacheInfo;
     type: CacheType;
@@ -40,8 +43,6 @@ export async function loadCacheFiles(
 ): Promise<LoadedCache> {
     const cachePath = CACHE_PATH + info.name + "/";
 
-    const xteasPromise = fetchXteas(cachePath + "keys.json", signal);
-
     const cacheType = detectCacheType(info);
     const files = await CacheFiles.fetchFiles(
         cacheType,
@@ -52,7 +53,9 @@ export async function loadCacheFiles(
         progressListener,
     );
 
-    const xteas = await xteasPromise;
+    const xteas = cacheRequiresMapXteas(info)
+        ? await fetchMapXteas(cachePath, signal)
+        : new Map<number, number[]>();
 
     return {
         info,
@@ -62,12 +65,34 @@ export async function loadCacheFiles(
     };
 }
 
-export type XteaMap = Map<number, number[]>;
+async function fetchMapXteas(cachePath: string, signal?: AbortSignal): Promise<XteaMap> {
+    const keysUrl = cachePath + "keys.json";
+    const fromKeys = await fetchXteasOptional(keysUrl, signal);
+    if (fromKeys.size > 0) {
+        return fromKeys;
+    }
+    return fetchXteasOptional(cachePath + "xteas.json", signal);
+}
 
+export async function fetchXteasOptional(url: RequestInfo, signal?: AbortSignal): Promise<XteaMap> {
+    try {
+        const resp = await fetch(url, { signal });
+        if (!resp.ok) {
+            return new Map();
+        }
+        const text = await resp.text();
+        return parseXteaMapFromJsonText(text);
+    } catch {
+        return new Map();
+    }
+}
+
+/** @deprecated Prefer {@link fetchXteasOptional} or revision-aware loading via {@link loadCacheFiles}. */
 export async function fetchXteas(url: RequestInfo, signal?: AbortSignal): Promise<XteaMap> {
-    const resp = await fetch(url, {
-        signal,
-    });
-    const data: Record<string, number[]> = await resp.json();
-    return new Map(Object.keys(data).map((key) => [parseInt(key), data[key]]));
+    const resp = await fetch(url, { signal });
+    if (!resp.ok) {
+        throw new Error(`Failed to load map keys: ${resp.status} ${resp.statusText}`);
+    }
+    const text = await resp.text();
+    return parseXteaMapFromJsonText(text);
 }

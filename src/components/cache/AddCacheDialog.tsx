@@ -122,6 +122,9 @@ export function AddCacheDialog({ open, editing, onClose, onSave, onDelete }: Add
               <label className="block text-sm">
                 <span className="mb-1 block font-medium">Revision</span>
                 <input className="w-full rounded-md border border-input bg-background px-2 py-1.5" value={revision} onChange={(e) => setRevision(e.target.value)} />
+                <span className="mt-1 block text-xs text-muted-foreground">
+                  OSRS revision 237+ does not need keys.json or xteas.json for maps.
+                </span>
               </label>
             </div>
             <label className="block text-sm sm:col-span-2">

@@ -1,4 +1,5 @@
 import { CacheInfo } from "../../cache/CacheInfo";
+import { MAP_XTEA_OBSOLETE_FROM_REVISION } from "../../cache/map-xtea";
 import { ByteBuffer } from "../../io/ByteBuffer";
 import { Type } from "../Type";
 
@@ -35,6 +36,12 @@ export class SpotAnimType extends Type {
             this.modelId = buffer.readUnsignedShort();
         } else if (opcode === 2) {
             this.sequenceId = buffer.readUnsignedShort();
+        } else if (opcode === 3) {
+            if (this.cacheInfo.game === "oldschool" && this.cacheInfo.revision >= MAP_XTEA_OBSOLETE_FROM_REVISION) {
+                this.modelId = buffer.readInt();
+            } else {
+                buffer.readInt();
+            }
         } else if (opcode === 4) {
             this.widthScale = buffer.readUnsignedShort();
         } else if (opcode === 5) {

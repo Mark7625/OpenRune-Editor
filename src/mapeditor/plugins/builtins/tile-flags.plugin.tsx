@@ -83,7 +83,8 @@ function TileFlagsEditorToolPanelInner({ pluginHost: host }: MapEditorPalettePan
                 })}
                 <div className="rounded-md border border-border/80 bg-muted/20 px-2.5 py-2 text-[11px] text-muted-foreground">
                     Show overlays stay visible while this tool is active. Paint adds selected bits; Ctrl+paint clears
-                    them.
+                    them. Bridge / Render Z-1 on plane 1 show on ground (plane 0) in the 3D view; painting
+                    those flags on plane 0 also writes plane 1 (OSRS storage).
                 </div>
             </CardContent>
         </div>

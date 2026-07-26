@@ -1016,7 +1016,9 @@ export class MapEditor {
     getVisiblePlaneRange(): { startLevel: number; endLevel: number } {
         const max = Math.max(0, Math.min(Scene.MAX_LEVELS - 1, this.viewPlaneMax | 0));
         if (this.hideBelowViewPlane) {
-            return { startLevel: max, endLevel: Scene.MAX_LEVELS };
+            // Include one plane below so bridge-linked ground can draw (shader filters per tile).
+            const startLevel = max > 0 ? max - 1 : max;
+            return { startLevel, endLevel: Scene.MAX_LEVELS };
         }
         // Include one extra plane so bridge tiles can be clipped per-tile in the shader.
         return { startLevel: 0, endLevel: Math.min(max + 2, Scene.MAX_LEVELS) };

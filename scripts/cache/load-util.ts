@@ -3,6 +3,7 @@ import fs from "fs";
 import { CacheList, LoadedCache, XteaMap } from "../../src/mapviewer/Caches";
 import { CacheFiles } from "../../src/rs/cache/CacheFiles";
 import { CacheInfo, getLatestCache } from "../../src/rs/cache/CacheInfo";
+import { cacheRequiresMapXteas, parseXteaMapFromJsonText } from "../../src/rs/cache/map-xtea";
 import { detectCacheType } from "../../src/rs/cache/CacheType";
 
 export function loadCacheInfos(): CacheInfo[] {
@@ -53,8 +54,19 @@ export function loadCache(info: CacheInfo): LoadedCache {
 }
 
 export function loadXteas(cache: CacheInfo): XteaMap {
+    if (!cacheRequiresMapXteas(cache)) {
+        return new Map();
+    }
     const cachePath = "./caches/" + cache.name + "/";
-    const json = fs.readFileSync(cachePath + "keys.json", "utf8");
-    const data: Record<string, number[]> = JSON.parse(json);
-    return new Map(Object.keys(data).map((key) => [parseInt(key), data[key]]));
+    const keysPath = cachePath + "keys.json";
+    const xteasPath = cachePath + "xteas.json";
+    if (fs.existsSync(keysPath)) {
+        const json = fs.readFileSync(keysPath, "utf8");
+        return parseXteaMapFromJsonText(json);
+    }
+    if (fs.existsSync(xteasPath)) {
+        const json = fs.readFileSync(xteasPath, "utf8");
+        return parseXteaMapFromJsonText(json);
+    }
+    return new Map();
 }

@@ -31,19 +31,46 @@ bool isPlayerLevel(int level, vec2 pos, int playerLevel) {
     return playerLevel == getTileMinLevel(level, pos);
 }
 
+// OSRS bridge (plane 1) / render-on-lower-Z (plane above) — upper tile draws when viewing the plane below.
+bool tileRendersOnPlaneBelow(int upperPlane, vec2 pos) {
+    if (upperPlane <= 0 || upperPlane > 3) {
+        return false;
+    }
+    int flags = getTileRenderFlag(upperPlane, pos);
+    if ((flags & 0x8) != 0) {
+        return true;
+    }
+    if (upperPlane == 1 && (flags & 0x2) != 0) {
+        return true;
+    }
+    return false;
+}
+
 bool isScenePlaneVisible(int plane, vec2 pos, float viewPlaneMax, float hideBelowViewPlane) {
     int maxPlane = int(viewPlaneMax);
+
     if (hideBelowViewPlane > 0.5) {
         if (plane < maxPlane) {
+            // Force ground under bridge when editing an upper plane only.
+            if (plane == maxPlane - 1 && tileRendersOnPlaneBelow(maxPlane, pos)) {
+                return true;
+            }
             return false;
         }
         return isPlayerLevel(plane, pos, maxPlane);
     }
 
     if (plane <= maxPlane) {
+        // Match MapImageRenderer: skip primary draw when render-Z or no-map-draw is set on this plane.
+        if ((getTileRenderFlag(plane, pos) & 0x18) != 0) {
+            return false;
+        }
         return true;
     }
     if (plane == maxPlane + 1 && maxPlane < 3) {
+        if (tileRendersOnPlaneBelow(plane, pos)) {
+            return true;
+        }
         return isPlayerLevel(plane, pos, maxPlane);
     }
     return false;

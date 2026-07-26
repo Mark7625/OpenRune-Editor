@@ -1,7 +1,8 @@
 import { CacheFiles } from "../rs/cache/CacheFiles";
 import { detectCacheType } from "../rs/cache/CacheType";
 import type { CacheInfo } from "../rs/cache/CacheInfo";
-import type { LoadedCache, XteaMap } from "../mapviewer/Caches";
+import type { LoadedCache } from "../mapviewer/Caches";
+import { cacheRequiresMapXteas, parseXteaMapFromCacheFiles } from "../rs/cache/map-xtea";
 import type { LocalCacheProfile } from "./local-cache-profiles";
 
 const DB_NAME = "openrune-cache-files-v1";
@@ -78,36 +79,38 @@ function normalizeName(file: File): string {
   return parts[parts.length - 1];
 }
 
-function parseXteas(files: Map<string, ArrayBuffer>): XteaMap {
-  const keysBuffer = files.get("keys.json");
-  if (!keysBuffer) {
-    return new Map();
+/** Only persist Jagex cache store files (ignore loose maps folder noise when picking parent dirs). */
+function isCacheStoreFileName(name: string): boolean {
+  if (name === "keys.json" || name === "xteas.json") {
+    return true;
   }
-  try {
-    const text = new TextDecoder().decode(keysBuffer);
-    const data = JSON.parse(text) as Record<string, number[]>;
-    return new Map(Object.keys(data).map((k) => [parseInt(k, 10), data[k]]));
-  } catch {
-    return new Map();
+  if (name === "main_file_cache.dat2" || name === "main_file_cache.dat") {
+    return true;
   }
+  if (name === "main_file_cache.idx255") {
+    return true;
+  }
+  return /^main_file_cache\.idx\d+$/.test(name);
 }
 
-function buildInfo(profile: LocalCacheProfile, files: Map<string, ArrayBuffer>): CacheInfo {
-  const hasDat2 = files.has("main_file_cache.dat2");
-  const parsedRevision = Number.parseInt(profile.revision, 10);
-  const revision = Number.isFinite(parsedRevision) ? parsedRevision : hasDat2 ? 700 : 317;
-  let size = 0;
-  for (const buf of files.values()) {
-    size += buf.byteLength;
+function validateImportedCacheFiles(files: Record<string, ArrayBuffer>): void {
+  const names = new Set(Object.keys(files));
+  const hasDat2 = names.has("main_file_cache.dat2");
+  const hasDat = names.has("main_file_cache.dat");
+  if (!hasDat2 && !hasDat) {
+    throw new Error(
+      "Import folder must contain main_file_cache.dat2 (OSRS) or main_file_cache.dat. Select the cache output folder, not a maps export subfolder.",
+    );
   }
-  return {
-    name: profile.name || "local-cache",
-    game: hasDat2 ? "oldschool" : "runescape",
-    environment: "local",
-    revision,
-    timestamp: new Date().toISOString(),
-    size,
-  };
+  if (hasDat2 && !names.has("main_file_cache.idx255")) {
+    throw new Error("Missing main_file_cache.idx255 — import the full cache directory from your filestore build.");
+  }
+  const idxCount = [...names].filter((n) => /^main_file_cache\.idx\d+$/.test(n)).length;
+  if (hasDat2 && idxCount < 2) {
+    throw new Error(
+      "Too few index files (main_file_cache.idx*). Import the complete cache folder with all idx files.",
+    );
+  }
 }
 
 export async function saveProfileCacheFiles(profileId: string, files: FileList | File[]): Promise<void> {
@@ -115,8 +118,17 @@ export async function saveProfileCacheFiles(profileId: string, files: FileList |
   const record: Record<string, ArrayBuffer> = {};
   for (const file of fileArray) {
     const key = normalizeName(file);
+    if (!isCacheStoreFileName(key)) {
+      continue;
+    }
     record[key] = await file.arrayBuffer();
   }
+  if (Object.keys(record).length === 0) {
+    throw new Error(
+      "No cache files found. Choose the folder that contains main_file_cache.dat2 and main_file_cache.idx* files.",
+    );
+  }
+  validateImportedCacheFiles(record);
   const db = await openDb();
   try {
     try {
@@ -137,6 +149,24 @@ export async function saveProfileCacheFiles(profileId: string, files: FileList |
   } finally {
     db.close();
   }
+}
+
+function buildInfo(profile: LocalCacheProfile, files: Map<string, ArrayBuffer>): CacheInfo {
+  const hasDat2 = files.has("main_file_cache.dat2");
+  const parsedRevision = Number.parseInt(profile.revision, 10);
+  const revision = Number.isFinite(parsedRevision) ? parsedRevision : hasDat2 ? 700 : 317;
+  let size = 0;
+  for (const buf of files.values()) {
+    size += buf.byteLength;
+  }
+  return {
+    name: profile.name || "local-cache",
+    game: hasDat2 ? "oldschool" : "runescape",
+    environment: "local",
+    revision,
+    timestamp: new Date().toISOString(),
+    size,
+  };
 }
 
 export async function hasProfileCache(profileId: string): Promise<boolean> {
@@ -172,7 +202,7 @@ export async function loadProfileCache(profile: LocalCacheProfile): Promise<Load
     const info = buildInfo(profile, filesMap);
     const type = detectCacheType(info);
     const files = new CacheFiles(filesMap);
-    const xteas = parseXteas(filesMap);
+    const xteas = cacheRequiresMapXteas(info) ? parseXteaMapFromCacheFiles(filesMap) : new Map();
 
     return {
       info,

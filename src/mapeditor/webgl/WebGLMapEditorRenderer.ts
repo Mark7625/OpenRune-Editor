@@ -96,9 +96,11 @@ import { applyHeightToolRuntime } from "../plugins/builtins/height-edit-runtime"
 import { applyTileRenderFlagsRuntime } from "../plugins/builtins/tile-flags-edit-runtime";
 import { getTileFlagsToolModel } from "../plugins/builtins/tile-flags-tool-model";
 import {
-    formatTileRenderFlags,
-    shouldShowTileRenderFlag,
+    formatTileRenderFlagsForView,
+    shouldShowTileRenderFlagForView,
     TILE_RENDER_FLAG_DESCRIPTORS,
+    tileRenderFlagOverlayDrawLevel,
+    tileRenderFlagValueLabelForView,
 } from "../../rs/map/TileRenderFlags";
 import { syncSceneLocHeightsForHeightEdit, markObjectChunksForHeightEdit } from "./scene-loc-height-sync";
 import { recordHistoryTileMutation } from "../map-editor-history-record";
@@ -932,6 +934,8 @@ export class WebGLMapEditorRenderer extends MapEditorRenderer<EditorMapSquare> {
         const level = this.host.selectedLevel;
         this.app.disable(PicoGL.DEPTH_TEST);
         this.app.disable(PicoGL.CULL_FACE);
+        this.app.enable(PicoGL.BLEND);
+        this.app.blendFunc(PicoGL.SRC_ALPHA, PicoGL.ONE_MINUS_SRC_ALPHA);
 
         for (let i = 0; i < this.mapManager.visibleMapCount; i++) {
             const map = this.mapManager.visibleMaps[i];
@@ -943,21 +947,35 @@ export class WebGLMapEditorRenderer extends MapEditorRenderer<EditorMapSquare> {
                     if (sceneX >= scene.sizeX || sceneY >= scene.sizeY) {
                         continue;
                     }
-                    const flagValue = scene.tileRenderFlags[level][sceneX][sceneY] ?? 0;
-                    if (flagValue === 0) {
-                        continue;
-                    }
                     for (const descriptor of TILE_RENDER_FLAG_DESCRIPTORS) {
-                        if (!shouldShowTileRenderFlag(flagValue, descriptor.flag, model.showFlags)) {
+                        if (
+                            !shouldShowTileRenderFlagForView(
+                                scene.tileRenderFlags,
+                                sceneX,
+                                sceneY,
+                                level,
+                                descriptor.flag,
+                                model.showFlags,
+                            )
+                        ) {
                             continue;
                         }
-                        this.drawTileFlagHighlight(map, level, lx, ly, descriptor.color);
+                        const drawLevel = tileRenderFlagOverlayDrawLevel(
+                            scene.tileRenderFlags,
+                            sceneX,
+                            sceneY,
+                            level,
+                            descriptor.flag,
+                        );
+                        this.drawTileFlagHighlight(map, drawLevel, lx, ly, descriptor.color);
                     }
                 }
             }
         }
 
+        this.app.disable(PicoGL.BLEND);
         this.app.enable(PicoGL.CULL_FACE);
+        this.app.enable(PicoGL.DEPTH_TEST);
     }
 
     private renderTileFlagsBrushPreview(): void {
@@ -966,65 +984,16 @@ export class WebGLMapEditorRenderer extends MapEditorRenderer<EditorMapSquare> {
         }
 
         const level = this.host.selectedLevel;
-        this.app.disable(PicoGL.DEPTH_TEST);
-        this.app.disable(PicoGL.CULL_FACE);
-
-        this.highlightTileDrawCall.uniform("u_fillColor", [
-            this.brushFill[0],
-            this.brushFill[1],
-            this.brushFill[2],
+        this.beginTileHighlightPass(
+            this.brushFill,
+            this.brushOutlineColor,
+            level,
             Math.min(this.brushFill[3], 0.28),
-        ]);
-        this.highlightTileDrawCall.uniform("u_outlineColor", [
-            this.brushOutlineColor[0],
-            this.brushOutlineColor[1],
-            this.brushOutlineColor[2],
-            this.brushOutlineColor[3],
-        ]);
-        this.highlightTileDrawCall.uniform("u_outlineThickness", this.brushOutlineThickness);
-        this.highlightTileDrawCall.uniform("u_level", level);
-
-        const hoveredTilesMap = new Map<number, number[]>();
+        );
         this.forEachBrushOffset((dx, dy) => {
-            const worldX = this.hoverWorldX + dx;
-            const worldY = this.hoverWorldY + dy;
-            const mapX = Math.floor(worldX / 64);
-            const mapY = Math.floor(worldY / 64);
-            const lx = worldX - mapX * 64;
-            const ly = worldY - mapY * 64;
-            const tileId = (lx << 8) | ly;
-            const mapId = getMapSquareId(mapX, mapY);
-            const hoveredTiles = hoveredTilesMap.get(mapId);
-            if (hoveredTiles) {
-                hoveredTiles.push(tileId);
-            } else {
-                hoveredTilesMap.set(mapId, [tileId]);
-            }
+            this.drawWorldTileHighlightAt(this.hoverWorldX + dx, this.hoverWorldY + dy, level);
         });
-
-        for (let i = 0; i < this.mapManager.visibleMapCount; i++) {
-            const map = this.mapManager.visibleMaps[i];
-            const mapId = getMapSquareId(map.mapX, map.mapY);
-            const hoveredTiles = hoveredTilesMap.get(mapId);
-            if (!hoveredTiles) {
-                continue;
-            }
-            this.highlightTileDrawCall.uniform("u_mapX", map.mapX);
-            this.highlightTileDrawCall.uniform("u_mapY", map.mapY);
-            this.highlightTileDrawCall.texture("u_heightMap", map.heightMapTexture);
-            for (const tileId of hoveredTiles) {
-                const lx = tileId >> 8;
-                const ly = tileId & 0xff;
-                this.highlightTileDrawCall.uniform("u_edgeMask", [1, 1, 1, 1]);
-                this.highlightTileDrawCall.uniform("u_highlightShapeMode", 0);
-                this.highlightTileDrawCall.uniform("u_tileX", lx);
-                this.highlightTileDrawCall.uniform("u_tileY", ly);
-                this.highlightTileDrawCall.drawRanges(this.highlightFullTileRange);
-                this.highlightTileDrawCall.draw();
-            }
-        }
-
-        this.app.enable(PicoGL.CULL_FACE);
+        this.endTileHighlightPass();
     }
 
     private updateTileFlagsHoverDebug(): void {
@@ -1034,8 +1003,20 @@ export class WebGLMapEditorRenderer extends MapEditorRenderer<EditorMapSquare> {
         }
 
         const level = this.host.selectedLevel;
-        const flagValue = this.getTileRenderFlagAtWorld(level, this.hoverWorldX, this.hoverWorldY) ?? 0;
-        this.host.debugText = `Tile (${this.hoverWorldX}, ${this.hoverWorldY}) L${level} flags: ${formatTileRenderFlags(flagValue)} [${flagValue}]`;
+        const mapX = Math.floor(this.hoverWorldX / 64);
+        const mapY = Math.floor(this.hoverWorldY / 64);
+        const map = this.mapManager.getMap(mapX, mapY) as EditorMapSquare | undefined;
+        if (!map) {
+            this.host.debugText = undefined;
+            return;
+        }
+        const lx = ((this.hoverWorldX % 64) + 64) % 64;
+        const ly = ((this.hoverWorldY % 64) + 64) % 64;
+        const sceneX = lx + map.borderSize;
+        const sceneY = ly + map.borderSize;
+        const labels = formatTileRenderFlagsForView(map.scene.tileRenderFlags, sceneX, sceneY, level);
+        const raw = tileRenderFlagValueLabelForView(map.scene.tileRenderFlags, sceneX, sceneY, level);
+        this.host.debugText = `Tile (${this.hoverWorldX}, ${this.hoverWorldY}) view L${level} flags: ${labels} (${raw})`;
     }
 
     private handleTerrainSmoothingToggle(): void {
@@ -2944,6 +2925,7 @@ export class WebGLMapEditorRenderer extends MapEditorRenderer<EditorMapSquare> {
             }
 
             if (map.tileRenderFlagsUpdated) {
+                map.scene.setTileMinLevels();
                 map.updateTileRenderFlagsTexture(this.app);
                 map.tileRenderFlagsUpdated = false;
             }

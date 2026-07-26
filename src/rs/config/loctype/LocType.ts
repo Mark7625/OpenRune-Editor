@@ -2,6 +2,12 @@ import { toSigned16bit } from "../../../util/MathUtil";
 import { CacheInfo } from "../../cache/CacheInfo";
 import { ByteBuffer } from "../../io/ByteBuffer";
 import { ParamsMap, Type } from "../Type";
+import {
+    cacheSupportsExtendedEntityOps,
+    skipEntityConditionalOp,
+    skipEntityConditionalSubOp,
+    skipEntitySubOps,
+} from "../entity-ops-decode";
 import { VarManager } from "../vartype/VarManager";
 import { LocModelType } from "./LocModelType";
 import { LocTypeLoader } from "./LocTypeLoader";
@@ -454,8 +460,9 @@ export class LocType extends Type {
             const cursor1op = buffer.readUnsignedByte();
             const cursor1 = buffer.readUnsignedShort();
         } else if (opcode === 100) {
-            if (this.cacheInfo.game === "oldschool") {
-                // subop
+            if (cacheSupportsExtendedEntityOps(this.cacheInfo)) {
+                skipEntitySubOps(buffer);
+            } else if (this.cacheInfo.game === "oldschool") {
                 buffer.readUnsignedByte();
                 buffer.readUnsignedByte();
                 buffer.readString();
@@ -464,8 +471,9 @@ export class LocType extends Type {
                 const cursor2 = buffer.readUnsignedShort();
             }
         } else if (opcode === 101) {
-            if (this.cacheInfo.game === "oldschool") {
-                // multiop
+            if (cacheSupportsExtendedEntityOps(this.cacheInfo)) {
+                skipEntityConditionalOp(buffer);
+            } else if (this.cacheInfo.game === "oldschool") {
                 buffer.readUnsignedByte();
                 buffer.readUnsignedShort();
                 buffer.readUnsignedShort();
@@ -476,8 +484,9 @@ export class LocType extends Type {
                 const mapSceneRotationOff = buffer.readUnsignedByte();
             }
         } else if (opcode === 102) {
-            if (this.cacheInfo.game === "oldschool") {
-                // multisubop
+            if (cacheSupportsExtendedEntityOps(this.cacheInfo)) {
+                skipEntityConditionalSubOp(buffer);
+            } else if (this.cacheInfo.game === "oldschool") {
                 buffer.readUnsignedByte();
                 buffer.readUnsignedShort();
                 buffer.readUnsignedShort();
